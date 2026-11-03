@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Flutter rewrites this generated file on every build. Its escaped
+         backslashes and unescaped drive colon are valid Java property values.
+         Keep PropertyEscape enabled for all app-owned property files. -->
+    <issue id="PropertyEscape">
+        <ignore path="../local.properties" />
+    </issue>
+</lint>

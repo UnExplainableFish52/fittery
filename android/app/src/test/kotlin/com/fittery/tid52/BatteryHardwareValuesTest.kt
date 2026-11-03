@@ -39,4 +39,13 @@ class BatteryHardwareValuesTest {
         assertEquals(0, result["cycles"])
         assertNull(result["designCapacityMah"])
     }
+    @Test fun neverCombinesDifferentControllersIntoAHealthRatio() {
+        val nodes = mapOf(
+            "/sys/class/power_supply/battery/charge_full" to 2500000.0,
+            "/sys/class/power_supply/bms/charge_full_design" to 5000000.0
+        )
+        val result = BatteryHardwareValues.discover({ nodes[it] }, { null })
+        assertEquals(false, result["capacityPairReliable"])
+        assertNull(BatteryHealthEstimate.calculate(result["designCapacityMah"] as? Double, result["fullCapacityMah"] as? Double, result["capacityPairReliable"] == true))
+    }
 }

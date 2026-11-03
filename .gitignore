@@ -56,3 +56,15 @@ app.*.map.json
 /goal.md
 /Fittery-Ui.jpg
 /graphui_inspiration.jpg
+/Fittery App Onboarding Triptych-2.png
+/Fittery Neon Underwater Dashboard.png
+/Glowing Eco Battery Shield-1.png
+/Neon Cyberpunk Charging Dashboard.png
+
+# Local screenshots and Android build exports
+/screenshots/
+*.apk
+*.aab
+
+# Python tooling caches
+__pycache__/

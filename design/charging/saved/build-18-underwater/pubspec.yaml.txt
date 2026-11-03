@@ -1,0 +1,26 @@
+name: fittery
+description: A lightweight, private Android battery monitor.
+publish_to: none
+version: 1.0.0+18
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  fl_chart: ^1.3.0
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - fittery_app_drawer_512.png
+    - assets/onboarding/
+    - assets/charging/neon_underwater_v1.webp

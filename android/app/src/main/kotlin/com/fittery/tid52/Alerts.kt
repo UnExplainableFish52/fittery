@@ -24,6 +24,9 @@ class Alerts private constructor(private val context: Context) {
         fun existing(): Alerts? = instance
         const val MONITOR_CHANNEL = "monitor"
         const val ALERT_CHANNEL = "battery_alerts"
+        const val SESSION_CHANNEL = "charging_sessions"
+        const val ENABLE_MONITOR = "com.fittery.tid52.ENABLE_MONITOR"
+        const val OPEN_REPORT = "com.fittery.tid52.OPEN_CHARGING_REPORT"
     }
     private val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val handler = Handler(Looper.getMainLooper())
@@ -78,6 +81,9 @@ class Alerts private constructor(private val context: Context) {
 
     init {
         if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(NotificationChannel(SESSION_CHANNEL, "Charging sessions", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Monitor reminders and completed charging reports"
+            })
             manager.createNotificationChannel(NotificationChannel(MONITOR_CHANNEL, "Battery monitoring", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Live battery readings while background monitoring is enabled"
                 setShowBadge(false)
@@ -96,6 +102,34 @@ class Alerts private constructor(private val context: Context) {
             .setColor(0xFF35D0BD.toInt())
             .setContentIntent(PendingIntent.getActivity(context,0,Intent(context,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
 
+    fun cancelMonitorReminder() { manager.cancel(20) }
+
+    fun monitorReminder(settings: Map<String, Any?>) {
+        val intent = Intent(context, MainActivity::class.java).setAction(ENABLE_MONITOR)
+        sessionNotification(20, "Record this charging session?", "Monitor mode is off. Tap to enable it and save your charging readings.", "Enable monitor mode", intent, settings)
+    }
+
+    fun chargingReport(report: Map<String, Any?>, settings: Map<String, Any?>) {
+        val id = (report["id"] as Number).toInt() + 100
+        val intent = Intent(context, MainActivity::class.java).setAction(OPEN_REPORT)
+            .putExtra("recordingId", (report["recordingId"] as Number).toLong())
+            .putExtra("startTime", (report["startTime"] as Number).toLong())
+            .putExtra("endTime", (report["endTime"] as Number).toLong())
+        sessionNotification(id, "Your charging session report is ready", "Charger disconnected. View your saved readings and graphs.", "View report", intent, settings)
+    }
+
+    private fun sessionNotification(id: Int, title: String, text: String, action: String, intent: Intent, settings: Map<String, Any?>) {
+        if (!manager.areNotificationsEnabled()) return
+        val open = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = builder(SESSION_CHANNEL).setContentTitle(title).setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text)).setContentIntent(open)
+            .setCategory(Notification.CATEGORY_STATUS).setAutoCancel(true)
+            .setVisibility(if (settings["lockScreen"] != false) Notification.VISIBILITY_PUBLIC else Notification.VISIBILITY_SECRET)
+            .addAction(Notification.Action.Builder(null, action, open).build()).build()
+        try { manager.notify(id, notification) }
+        catch (e: SecurityException) { android.util.Log.w("Fittery", "Charging session notification unavailable", e) }
+    }
+
     fun persistent(r: Map<String, Any?>): Notification {
         val s = r["settings"] as? Map<*,*> ?: emptyMap<Any,Any>()
         val dual = if (s["dualCell"] == true) 2 else 1
@@ -112,17 +146,26 @@ class Alerts private constructor(private val context: Context) {
             else -> "$current · $power · $temperature · $remaining"
         }
         val stop = PendingIntent.getService(context,1,Intent(context,MonitorService::class.java).setAction("STOP"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        return builder(MONITOR_CHANNEL)
+        val notification = builder(MONITOR_CHANNEL)
             .setContentTitle("${r["level"] ?: "—"}% · ${r["status"] ?: "Monitoring"}")
             .setContentText(detail).setStyle(Notification.BigTextStyle().bigText(detail))
             .setVisibility(if (s["lockScreen"] != false) Notification.VISIBILITY_PUBLIC else Notification.VISIBILITY_SECRET)
             .setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
-            .addAction(Notification.Action.Builder(null, "Stop monitoring", stop).build())
-            .build()
+        if (r["alarmActive"] == true) {
+            notification.setSubText("Battery alarm active")
+                .addAction(Notification.Action.Builder(null, "Silence", silenceIntent()).build())
+        }
+        return notification.addAction(Notification.Action.Builder(null, "Stop monitoring", stop).build()).build()
     }
 
+    private fun silenceIntent(): PendingIntent = PendingIntent.getBroadcast(
+        context, 0, Intent(context, AlarmDismissReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
     fun notify(id: Int, title: String, message: String, settings: Map<String, Any?>) {
-        val dismiss = PendingIntent.getBroadcast(context,id,Intent(context,AlarmDismissReceiver::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        stopPreview()
+        val dismiss = silenceIntent()
         val n = builder(ALERT_CHANNEL).setContentTitle(title).setContentText(message)
             .setStyle(Notification.BigTextStyle().bigText(message))
             .setPriority(Notification.PRIORITY_HIGH).setCategory(Notification.CATEGORY_ALARM)
@@ -166,15 +209,14 @@ class Alerts private constructor(private val context: Context) {
     }
 
     private fun syncAlarmSound(settings: Map<String, Any?>) {
-        val selected = settings["toneUri"] as? String
-        val silent = settings.containsKey("toneUri") && selected == null
-        if (activeAlarmMask == 0 || settings["sound"] == false || silent) { stopAlarmSound(); return }
-        val uri = selected?.let(Uri::parse) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-        val key = uri.toString()
+        val tone = AlertTone.active(activeAlarmMask, settings)
+        if (tone == null || settings["sound"] == false) { stopAlarmSound(); return }
+        val key = "${tone.key}:${tone.source(settings)}:${tone.selectedUri(settings)}"
         if (alarmTone != null && alarmToneKey == key) return
         stopPreview()
         stopAlarmSound()
         try {
+            val uri = toneUri(settings, tone, allowFallback = true)
             val player = RingtoneManager.getRingtone(context, uri) ?: return
             player.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
             if (Build.VERSION.SDK_INT >= 28) player.isLooping = true
@@ -193,25 +235,39 @@ class Alerts private constructor(private val context: Context) {
         finally { alarmTone = null; alarmToneKey = null }
     }
 
-    fun startPreview(settings: Map<String, Any?>): Boolean {
+    fun startPreview(settings: Map<String, Any?>, tone: AlertTone = AlertTone.CHARGE): Boolean {
         check(!alarmActive) { "Silence the active battery alarm before previewing another tone." }
-        return play(settings, 3000, preview = true)
+        return play(settings, tone, 30000)
     }
 
     fun stopPreview() { if (previewPlaying) stopPreviewSound() }
 
-    private fun play(settings: Map<String, Any?>, millis: Long, preview: Boolean = false): Boolean {
+    private fun toneUri(settings: Map<String, Any?>, tone: AlertTone, allowFallback: Boolean): Uri {
+        if (tone.source(settings) == "bundled") return tone.defaultUri(context)
+        val selected = tone.selectedUri(settings)?.let(Uri::parse)
+            ?: return tone.defaultUri(context)
+        if (tone.source(settings) == "file") {
+            try { AlarmAudioFile(context).requireReadable(selected) }
+            catch (e: Exception) {
+                if (!allowFallback) throw e
+                android.util.Log.w("Fittery", "Selected audio unavailable; using the bundled alert voice", e)
+                return tone.defaultUri(context)
+            }
+        }
+        return selected
+    }
+
+    private fun play(settings: Map<String, Any?>, tone: AlertTone, millis: Long): Boolean {
         stopPreviewSound()
-        val selected = settings["toneUri"] as? String
-        // A null URI from the picker means the user selected Silent.
-        if (settings.containsKey("toneUri") && selected == null) return false
-        val uri = selected?.let(Uri::parse) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+        if (tone.source(settings) == "silent") return false
+        val uri = toneUri(settings, tone, allowFallback = false)
         return try {
             val player = RingtoneManager.getRingtone(context,uri) ?: return false
             ringtone = player
             player.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
+            if (Build.VERSION.SDK_INT >= 28) player.isLooping = false
             player.play()
-            publishPreviewState(preview)
+            publishPreviewState(true)
             handler.postDelayed(checkPlayback, 150)
             handler.postDelayed(stopSound,millis)
             true

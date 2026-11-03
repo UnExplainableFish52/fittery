@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500" role="img" aria-labelledby="title desc">
+  <title id="title">Fittery — know your battery</title>
+  <desc id="desc">Live readings, local history and charging alerts, with an illustrated battery on a teal background.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#073F46"/><stop offset="1" stop-color="#092A33"/></linearGradient>
+    <linearGradient id="charge" x2="1" y2="1"><stop stop-color="#45E4C8"/><stop offset="1" stop-color="#B7F26B"/></linearGradient>
+  </defs>
+  <rect width="1024" height="500" fill="url(#background)"/>
+  <circle cx="830" cy="250" r="186" fill="#43E4C2" opacity=".035"/>
+  <circle cx="830" cy="250" r="148" fill="none" stroke="#58D8C2" opacity=".11"/>
+  <g font-family="Segoe UI,Arial,sans-serif" fill="#F2FCFA">
+    <text x="72" y="104" font-size="25" font-weight="600">Fittery</text>
+    <text x="68" y="205" font-size="64" font-weight="700">Know your</text>
+    <text x="68" y="279" font-size="64" font-weight="700">battery.</text>
+    <g font-size="22" fill="#B8D9D7">
+      <text x="72" y="342">Live readings. Local history.</text>
+      <text x="72" y="375">Charging alerts you control.</text>
+    </g>
+  </g>
+  <rect x="646" y="179" width="270" height="154" rx="30" fill="#0B3940" stroke="#6CDCC4" stroke-width="4"/>
+  <rect x="923" y="227" width="12" height="58" rx="5" fill="#6CDCC4"/>
+  <g fill="url(#charge)">
+    <rect x="665" y="198" width="49" height="116" rx="10"/>
+    <rect x="726" y="198" width="49" height="116" rx="10"/>
+    <rect x="787" y="198" width="49" height="116" rx="10"/>
+  </g>
+  <rect x="848" y="198" width="49" height="116" rx="10" fill="#6CDCC4" opacity=".13"/>
+  <path d="M72 426H952" stroke="#39727A" stroke-width="1"/>
+</svg>

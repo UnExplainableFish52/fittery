@@ -10,7 +10,7 @@ object BatteryMath {
         for ((bit, keys, default) in listOf(
             Triple(1, Pair("chargeAlert", "chargeLimit"), 80),
             Triple(2, Pair("lowAlert", "lowLimit"), 20),
-            Triple(4, Pair("heatAlert", "heatLimit"), 40)
+            Triple(4, Pair("heatAlert", "heatLimit"), 38)
         )) {
             val enabledChanged = (before[keys.first] == true) != (after[keys.first] == true)
             val oldLimit = (before[keys.second] as? Number)?.toInt() ?: default
@@ -24,7 +24,7 @@ object BatteryMath {
         var result = mask
         val chargeLimit = (settings["chargeLimit"] as? Number)?.toInt() ?: 80
         val lowLimit = (settings["lowLimit"] as? Number)?.toInt() ?: 20
-        val heatLimit = (settings["heatLimit"] as? Number)?.toInt() ?: 40
+        val heatLimit = (settings["heatLimit"] as? Number)?.toInt() ?: 38
         if (!plugged || settings["chargeAlert"] != true || level != null && level < chargeLimit) result = result and 1.inv()
         if (plugged || settings["lowAlert"] != true || level != null && level > lowLimit) result = result and 2.inv()
         if (settings["heatAlert"] != true || temperature != null && temperature < heatLimit - 2) result = result and 4.inv()

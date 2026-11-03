@@ -23,6 +23,22 @@ object BatteryHardwareValues {
                 break
             }
         }
+        // Multi-cell phones can expose pack and cell values on different nodes.
+        // Never calculate health by mixing those nodes or a device profile.
+        val pair = supplies.firstNotNullOfOrNull { supply ->
+            val full = validCapacity(read("/sys/class/power_supply/$supply/charge_full")?.div(1000))
+            val design = validCapacity(read("/sys/class/power_supply/$supply/charge_full_design")?.div(1000))
+            if (full != null && design != null) Triple(supply, full, design) else null
+        }
+        if (pair != null) {
+            result["fullCapacityMah"] = pair.second
+            result["designCapacityMah"] = pair.third
+            result["designCapacitySource"] = "Battery controller"
+            result["capacityPairReliable"] = true
+            result["capacityController"] = pair.first
+            return result
+        }
+        result["capacityPairReliable"] = false
         capacity("charge_full")?.let { result["fullCapacityMah"] = it }
         val design = capacity("charge_full_design")
         if (design != null) {

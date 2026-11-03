@@ -1,0 +1,6 @@
+Fittery 1.1.1 - Temperature alarm patch
+
+- Silence an active battery alarm directly from the ongoing monitoring notification.
+- Alarm controls update immediately when a warning starts or is acknowledged.
+- Acknowledging a temperature warning keeps monitoring running without repeating the alarm while the battery remains hot.
+- The default temperature warning remains 38 degrees C.

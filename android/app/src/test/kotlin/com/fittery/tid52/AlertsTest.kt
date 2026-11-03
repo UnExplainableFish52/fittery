@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ProviderInfo
 import android.os.Looper
 import android.net.Uri
 import android.media.Ringtone
@@ -23,6 +24,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadow.api.Shadow
+import org.robolectric.Robolectric
+import org.robolectric.shadows.ShadowContentResolver
 import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
@@ -38,8 +41,35 @@ class AlertsTest {
         alerts = Alerts.get(context)
         alerts.stop()
         AlarmRingtoneManagerShadow.players.clear()
+        AlarmRingtoneManagerShadow.uris.clear()
+        ShadowContentResolver.registerProviderInternal("audio.test", Robolectric.buildContentProvider(LocalAudioProvider::class.java).create(ProviderInfo().apply { authority = "audio.test" }).get())
     }
     @After fun cleanup() { alerts.stop() }
+
+    @Test fun eachAlertPreviewsItsDedicatedVoiceWithoutLooping() {
+        for (tone in AlertTone.entries) {
+            assertTrue(alerts.startPreview(emptyMap(), tone))
+            assertEquals(tone.defaultUri(context), AlarmRingtoneManagerShadow.uris.last())
+            assertFalse(AlarmRingtoneManagerShadow.players.last().isLooping)
+            alerts.stopPreview()
+            assertFalse(AlarmRingtoneManagerShadow.players.last().isPlaying)
+        }
+    }
+
+    @Test fun temperatureAlarmInterruptsChargeAndChargeResumesWhenTemperatureRecovers() {
+        val audible = settings + mapOf("sound" to true, "heatAlert" to true, "heatLimit" to 38)
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putString("values", JSONObject(audible).toString()).commit()
+        alerts.notify(11, "Charge", "Target", audible)
+        val charge = AlarmRingtoneManagerShadow.players.last()
+        alerts.notify(13, "Heat", "Warm", audible)
+        assertFalse(charge.isPlaying)
+        assertEquals(AlertTone.HEAT.defaultUri(context), AlarmRingtoneManagerShadow.uris.last())
+        val heat = AlarmRingtoneManagerShadow.players.last()
+        alerts.reconcile(true, 80, 30.0, audible)
+        assertFalse(heat.isPlaying)
+        assertEquals(AlertTone.CHARGE.defaultUri(context), AlarmRingtoneManagerShadow.uris.last())
+        assertTrue(AlarmRingtoneManagerShadow.players.last().isPlaying)
+    }
 
     private fun notification(): Notification? = (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
         .activeNotifications.firstOrNull { it.id == 11 }?.notification
@@ -86,6 +116,37 @@ class AlertsTest {
         AlarmDismissReceiver().onReceive(context, Intent())
         assertFalse(player.isPlaying)
     }
+
+    @Test fun aLocalSongUsesTheSameSelectionForPreviewAndLoopingAlarm() {
+        val uri = Uri.parse("content://audio.test/song")
+        val custom = settings + mapOf("toneUri" to uri.toString(), "toneSource" to "file", "sound" to true)
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putString("values", JSONObject(custom).toString()).commit()
+        assertTrue(alerts.startPreview(custom))
+        val preview = AlarmRingtoneManagerShadow.players.last()
+        assertEquals(uri, AlarmRingtoneManagerShadow.uris.last())
+        shadowOf(Looper.getMainLooper()).idleFor(3, TimeUnit.SECONDS)
+        assertTrue(preview.isPlaying) // Long voices must not be cut off at three seconds.
+        shadowOf(Looper.getMainLooper()).idleFor(27, TimeUnit.SECONDS)
+        assertFalse(preview.isPlaying)
+        assertFalse(alerts.previewPlaying)
+        alerts.notify(11, "Charging target reached", "Battery is at 80%", custom)
+        val alarm = AlarmRingtoneManagerShadow.players.last()
+        assertEquals(uri, AlarmRingtoneManagerShadow.uris.last())
+        assertTrue(alarm.isLooping)
+        assertTrue(alarm.isPlaying)
+        alerts.silence()
+        assertFalse(alarm.isPlaying)
+    }
+
+    @Test fun removedSongHasAPreviewErrorButActualAlarmsFallBackToTheDefaultTone() {
+        val custom = settings + mapOf("toneUri" to "content://audio.test/missing", "toneSource" to "file", "sound" to true)
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putString("values", JSONObject(custom).toString()).commit()
+        try { alerts.startPreview(custom); fail("Missing preview should fail") }
+        catch (e: IllegalArgumentException) { assertTrue(e.message!!.contains("Choose it again")) }
+        alerts.notify(11, "Charging target reached", "Battery is at 80%", custom)
+        assertEquals(AlertTone.CHARGE.defaultUri(context), AlarmRingtoneManagerShadow.uris.last())
+        assertTrue(AlarmRingtoneManagerShadow.players.last().isPlaying)
+    }
 }
 
 // Audio is simulated so these tests can exercise real notification, receiver,
@@ -94,9 +155,10 @@ class AlertsTest {
 class AlarmRingtoneManagerShadow {
     companion object {
         val players = mutableListOf<Ringtone>()
+        val uris = mutableListOf<Uri?>()
         @JvmStatic @Implementation fun getDefaultUri(type: Int): Uri = Uri.parse("content://test/alarm")
         @JvmStatic @Implementation fun getRingtone(context: Context, uri: Uri?): Ringtone =
-            Shadow.newInstanceOf(Ringtone::class.java).also { players.add(it) }
+            Shadow.newInstanceOf(Ringtone::class.java).also { players.add(it); uris.add(uri) }
     }
 }
 

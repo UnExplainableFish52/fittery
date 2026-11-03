@@ -1,8 +1,10 @@
 # Fittery Privacy Policy
 
-Last updated: October 26, 2026
+Last updated: October 29, 2026
 
 Fittery is developed by **TheIdealDev52 (Saksham Sharma)**. Its Android package is `com.fittery.tid52`.
+
+For privacy questions or support, contact **sharma@saksham.info.np**.
 
 Fittery reads battery measurements and basic device information to display status, estimate health and remaining time, record local history, and deliver battery and temperature alerts.
 
@@ -12,7 +14,7 @@ Battery samples, session records, preferences, and the selected alarm-tone refer
 
 Notifications and an optional foreground service make background monitoring visible. Users control alert thresholds, alarm sound, monitoring, and lock-screen visibility. The system alarm picker provides the chosen tone; audio is not uploaded.
 
-Battery history retains at most 10 sessions. Sessions expire 72 hours after they start. Expired or excess sessions, their readings, and their contributions to daily totals are automatically deleted when history is read or recorded. **Clear charge history** deletes all locally recorded chart and session data. Uninstalling Fittery deletes its private app data.
+Monitor mode saves three-second battery measurements for both charging and discharging in the app's private database. Each monitor recording keeps its original data; graphs are generated when viewed. Completed recordings expire 30 days after creation by default, with no count limit. Active recordings are protected. The "Keep recordings until I delete them" setting disables automatic deletion. Cleanup runs when recording or viewing history, so deletion can occur later if the app is not running. "Clear all recordings" removes all local recordings and the legacy telemetry cache. Uninstalling the app removes its private data. The legacy dashboard telemetry cache is separate and retains its existing short-term limits.
 
 Any developer-website or privacy-policy links open the user's browser. The browser and destination website operate under their own privacy policies.
 

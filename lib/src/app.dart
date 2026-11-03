@@ -1,12 +1,21 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/services.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'controller.dart';
 import 'models.dart';
 import 'threshold_control.dart';
-import 'history_data.dart';
 import 'about_section.dart';
+import 'current_chart.dart';
+import 'onboarding.dart';
+import 'charging_dashboard.dart';
+import 'smooth_toggle.dart';
+
+part 'monitor_history.dart';
+part 'saved_metric_graph.dart';
+part 'metric_chart.dart';
 
 class FitteryApp extends StatefulWidget {
   const FitteryApp({super.key, this.controller});
@@ -19,17 +28,24 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
   late final BatteryController controller;
   int index = 0;
   bool _animateTab = false;
+  final _navigator = GlobalKey<NavigatorState>();
+  bool _showingSessionPrompt = false;
+  bool _launchResolved = false, _showWelcome = false;
   @override
   void initState() {
     super.initState();
     controller = widget.controller ?? BatteryController();
+    controller.addListener(_controllerChanged);
     WidgetsBinding.instance.addObserver(this);
     if (widget.controller == null) unawaited(controller.initialize());
+    _resolveLaunch();
+    _checkSessionPrompt();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    controller.removeListener(_controllerChanged);
     if (widget.controller == null) controller.dispose();
     super.dispose();
   }
@@ -37,6 +53,128 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     controller.setAppActive(state == AppLifecycleState.resumed);
+    if (state == AppLifecycleState.resumed) _checkSessionPrompt();
+  }
+
+  void _checkSessionPrompt() {
+    if (!mounted ||
+        !_launchResolved ||
+        _showWelcome ||
+        controller.onboardingVisible ||
+        controller.chargingDashboardVisible ||
+        _showingSessionPrompt ||
+        !controller.appActive ||
+        controller.sessionPrompt == null) {
+      return;
+    }
+    _showingSessionPrompt = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final prompt = controller.sessionPrompt;
+        final context = _navigator.currentContext;
+        if (!mounted ||
+            context == null ||
+            prompt == null ||
+            !controller.appActive) {
+          return;
+        }
+        await controller.dismissSessionPrompt(prompt['token'] as num);
+        if (!context.mounted) return;
+        final enable = prompt['kind'] == 'enableMonitor';
+        if (enable &&
+            (controller.monitoring ||
+                controller.reading?.number('plugged') == 0)) {
+          return;
+        }
+        final open =
+            prompt['kind'] == 'openReport' ||
+            await showDialog<bool>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: Text(
+                      enable
+                          ? 'Record this charging session?'
+                          : 'Your charging report is ready',
+                    ),
+                    content: Text(
+                      enable
+                          ? 'Monitor mode is off. Enable it to save readings and graphs from now until you stop monitoring.'
+                          : 'Your charger is disconnected and your readings are saved. View the charging graphs in your monitor recording. Monitor mode stays on.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('Later'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: Text(
+                          enable ? 'Enable monitor mode' : 'View report',
+                        ),
+                      ),
+                    ],
+                  ),
+                ) ==
+                true;
+        if (!mounted || !context.mounted || !open) return;
+        if (enable) {
+          if (controller.monitoring ||
+              controller.reading?.number('plugged') == 0) {
+            return;
+          }
+          await runAction(context, () => controller.setMonitoring(true));
+        } else {
+          unawaited(
+            _navigator.currentState!.push(
+              MaterialPageRoute<void>(
+                builder: (_) => MonitorRecordingPage(
+                  c: controller,
+                  id: (prompt['recordingId'] as num).toInt(),
+                  chargingSince: (prompt['startTime'] as num).toInt(),
+                  chargingUntil: (prompt['endTime'] as num).toInt(),
+                ),
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        final context = _navigator.currentContext;
+        if (context != null && context.mounted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not open the charging prompt. Try again from History.',
+              ),
+            ),
+          );
+        }
+      } finally {
+        _showingSessionPrompt = false;
+        if (mounted) _checkSessionPrompt();
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  bool _resolveLaunch() {
+    if (_launchResolved || !controller.ready) return false;
+    _launchResolved = true;
+    _showWelcome = controller.shouldShowOnboarding;
+    controller.setDashboardVisible(!_showWelcome);
+    return true;
+  }
+
+  void _controllerChanged() {
+    if (_resolveLaunch() && mounted) setState(() {});
+    _checkSessionPrompt();
+  }
+
+  void _finishWelcome() {
+    setState(() => _showWelcome = false);
+    controller.setDashboardVisible(index == 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkSessionPrompt();
+    });
   }
 
   @override
@@ -80,6 +218,8 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
       }
 
       return MaterialApp(
+        restorationScopeId: 'fittery',
+        navigatorKey: _navigator,
         title: 'Fittery',
         debugShowCheckedModeBanner: false,
         theme: makeTheme(Brightness.light),
@@ -87,131 +227,128 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
         themeMode: theme == 'System default'
             ? ThemeMode.system
             : ThemeMode.dark,
-        home: Builder(
-          builder: (context) => Scaffold(
-            appBar: AppBar(
-              titleSpacing: 24,
-              title: Row(
-                children: [
-                  if (index == 0) ...[
-                    const Icon(Icons.bolt_rounded, color: mint, size: 27),
-                    const SizedBox(width: 8),
-                  ],
-                  Text(
-                    ['Fittery', 'History', 'Settings'][index],
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -.6,
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                if (index != 2)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 24),
-                    child: Row(
+        home: !_launchResolved
+            ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+            : _showWelcome
+            ? OnboardingPage(c: controller, onFinished: _finishWelcome)
+            : Builder(
+                builder: (context) => Scaffold(
+                  appBar: AppBar(
+                    titleSpacing: 24,
+                    title: Row(
                       children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: controller.reading == null
-                                ? Colors.grey
-                                : mint,
-                            shape: BoxShape.circle,
+                        if (index == 0) ...[
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(7),
+                            child: Image.asset(
+                              'fittery_app_drawer_512.png',
+                              width: 28,
+                              height: 28,
+                              excludeFromSemantics: true,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 7),
-                        Text(
-                          controller.reading == null ? 'CONNECTING' : 'LIVE',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            letterSpacing: 1.6,
+                          const SizedBox(width: 8),
+                        ],
+                        Flexible(
+                          child: Text(
+                            ['Fittery', 'History', 'Settings'][index],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -.6,
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
-              ],
-            ),
-            body: SafeArea(
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 680),
-                  child: Column(
-                    children: [
-                      if (controller.error != null)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
-                          child: Text(
-                            controller.error!,
-                            style: const TextStyle(color: coral),
-                          ),
-                        ),
-                      Expanded(
-                        child: TweenAnimationBuilder<double>(
-                          key: ValueKey('tab-transition-$index'),
-                          tween: Tween(begin: _animateTab ? 0 : 1, end: 1),
-                          duration: MediaQuery.disableAnimationsOf(context)
-                              ? Duration.zero
-                              : const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          builder: (context, progress, child) =>
-                              Transform.translate(
-                                offset: Offset(0, 6 * (1 - progress)),
-                                child: Opacity(
-                                  opacity: .75 + .25 * progress,
-                                  child: child,
+                  body: SafeArea(
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 680),
+                        child: Column(
+                          children: [
+                            if (controller.error != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  24,
+                                  4,
+                                  24,
+                                  8,
+                                ),
+                                child: Text(
+                                  controller.error!,
+                                  style: const TextStyle(color: coral),
                                 ),
                               ),
-                          child: switch (index) {
-                            0 => DashboardPage(c: controller),
-                            1 => HistoryPage(c: controller),
-                            _ => SettingsPage(c: controller),
-                          },
+                            Expanded(
+                              child: TweenAnimationBuilder<double>(
+                                key: ValueKey('tab-transition-$index'),
+                                tween: Tween(
+                                  begin: _animateTab ? 0 : 1,
+                                  end: 1,
+                                ),
+                                duration:
+                                    MediaQuery.disableAnimationsOf(context)
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 220),
+                                curve: Curves.easeOutCubic,
+                                builder: (context, progress, child) =>
+                                    Transform.translate(
+                                      offset: Offset(0, 6 * (1 - progress)),
+                                      child: Opacity(
+                                        opacity: .75 + .25 * progress,
+                                        child: child,
+                                      ),
+                                    ),
+                                child: switch (index) {
+                                  0 => DashboardPage(c: controller),
+                                  1 => HistoryPage(c: controller),
+                                  _ => SettingsPage(c: controller),
+                                },
+                              ),
+                            ),
+                          ],
                         ),
+                      ),
+                    ),
+                  ),
+                  bottomNavigationBar: NavigationBar(
+                    height: 72,
+                    animationDuration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 220),
+                    selectedIndex: index,
+                    onDestinationSelected: (value) {
+                      if (index == value) return;
+                      setState(() {
+                        index = value;
+                        _animateTab = true;
+                      });
+                      controller.setDashboardVisible(value == 0);
+                      controller.setHistoryVisible(value == 1);
+                    },
+                    destinations: const [
+                      NavigationDestination(
+                        icon: Icon(Icons.dashboard_outlined),
+                        selectedIcon: Icon(Icons.dashboard_rounded),
+                        label: 'Dashboard',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.show_chart_rounded),
+                        label: 'History',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.settings_outlined),
+                        selectedIcon: Icon(Icons.settings),
+                        label: 'Settings',
                       ),
                     ],
                   ),
                 ),
               ),
-            ),
-            bottomNavigationBar: NavigationBar(
-              height: 72,
-              animationDuration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 220),
-              selectedIndex: index,
-              onDestinationSelected: (value) {
-                if (index == value) return;
-                setState(() {
-                  index = value;
-                  _animateTab = true;
-                });
-                controller.setDashboardVisible(value == 0);
-                controller.setHistoryVisible(value == 1);
-              },
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.dashboard_outlined),
-                  selectedIcon: Icon(Icons.dashboard_rounded),
-                  label: 'Dashboard',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.show_chart_rounded),
-                  label: 'History',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.settings_outlined),
-                  selectedIcon: Icon(Icons.settings),
-                  label: 'Settings',
-                ),
-              ],
-            ),
-          ),
-        ),
       );
     },
   );
@@ -330,6 +467,36 @@ class MetricPanel extends Panel {
   Widget build(BuildContext context) {
     final metric = graphMetrics[label];
     final panel = super.build(context);
+    if (label == 'Health') {
+      return Semantics(
+        button: true,
+        label: 'Explain battery health',
+        child: InkWell(
+          key: const ValueKey('battery-health-details'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('About battery health'),
+              content: SingleChildScrollView(
+                child: Text(
+                  'Android health status: ${c.reading?.text('health') ?? 'Unavailable'}.\n\n'
+                  'A percentage is shown only when the same battery controller exposes both full and design capacities. It is a firmware capacity estimate, not an independent measurement of degradation.\n\n'
+                  'Remaining charge and a single partial charging session cannot reliably establish battery health. A low cycle count alone cannot validate a capacity estimate. Some phones expose incomplete or inconsistent battery data.',
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Close'),
+                ),
+              ],
+            ),
+          ),
+          child: panel,
+        ),
+      );
+    }
     if (metric == null) return panel;
     return Semantics(
       button: true,
@@ -453,6 +620,120 @@ class BatteryHero extends StatelessWidget {
   );
 }
 
+class BackgroundMonitorControl extends StatefulWidget {
+  const BackgroundMonitorControl({super.key, required this.c});
+  final BatteryController c;
+  @override
+  State<BackgroundMonitorControl> createState() =>
+      _BackgroundMonitorControlState();
+}
+
+class _BackgroundMonitorControlState extends State<BackgroundMonitorControl> {
+  bool? _requested;
+
+  Future<void> _change(bool enabled) async {
+    if (_requested != null || enabled == widget.c.monitoring) return;
+    setState(() => _requested = enabled);
+    try {
+      await runAction(context, () => widget.c.setMonitoring(enabled));
+    } finally {
+      if (mounted) setState(() => _requested = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.c,
+    builder: (context, _) {
+      final scheme = Theme.of(context).colorScheme;
+      final on = widget.c.monitoring;
+      final available = widget.c.reading != null || on;
+      final duration = MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 360);
+      return AnimatedContainer(
+        key: const ValueKey('background-monitor-card'),
+        duration: duration,
+        curve: Curves.easeInOutCubic,
+        constraints: const BoxConstraints(minHeight: 56),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: on
+              ? scheme.primary.withValues(alpha: .06)
+              : Colors.transparent,
+          border: Border.all(color: scheme.primary.withValues(alpha: .38)),
+        ),
+        child: MergeSemantics(
+          child: Padding(
+            padding: const EdgeInsets.only(left: 10, right: 2),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.sensors_rounded,
+                  size: 18,
+                  color: on ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _requested == null
+                        ? 'Monitor Battery'
+                        : _requested!
+                        ? 'Enabling…'
+                        : 'Stopping…',
+                    style: const TextStyle(fontSize: 13, height: 1.25),
+                  ),
+                ),
+                Tooltip(
+                  message: !available
+                      ? 'Waiting for battery readings'
+                      : on
+                      ? 'Recording and alerts on'
+                      : 'Recording and alerts off',
+                  child: SmoothToggle(
+                    key: const ValueKey('background-monitor-toggle'),
+                    value: on,
+                    onChanged: _requested != null || !available
+                        ? null
+                        : _change,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _ChargingControls extends StatelessWidget {
+  const _ChargingControls({required this.c});
+  final BatteryController c;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) {
+      final monitor = BackgroundMonitorControl(c: c);
+      if (!c.flag('chargingDashboard')) return monitor;
+      final dashboard = ChargingDashboardEntry(c: c, compact: true);
+      if (box.maxWidth < 320 ||
+          MediaQuery.textScalerOf(context).scale(13) > 18) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [monitor, const SizedBox(height: 10), dashboard],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: monitor),
+          const SizedBox(width: 10),
+          Expanded(child: dashboard),
+        ],
+      );
+    },
+  );
+}
+
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key, required this.c});
   final BatteryController c;
@@ -548,15 +829,44 @@ class DashboardPage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
         children: [
           Text(
-            'YOUR BATTERY, AT A GLANCE',
+            'Get to know your battery',
             style: TextStyle(
-              fontSize: 10,
-              letterSpacing: 2,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 21,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -.5,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            r == null ? 'Connecting to your battery…' : 'Live statistics',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.primary,
             ),
           ),
           const SizedBox(height: 22),
-          Center(child: BatteryHero(level: r?.level)),
+          Center(
+            child: c.flag('chargingDashboard')
+                ? Tooltip(
+                    message: r?.plugged == true
+                        ? 'Open charging dashboard'
+                        : 'Connect a charger to open dashboard',
+                    child: InkWell(
+                      key: const ValueKey(
+                        'battery-charging-dashboard-shortcut',
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      onTap: r?.plugged == true && !c.chargingDashboardVisible
+                          ? () => showChargingDashboard(context, c)
+                          : null,
+                      child: BatteryHero(level: r?.level),
+                    ),
+                  )
+                : BatteryHero(level: r?.level),
+          ),
           const SizedBox(height: 12),
           Center(
             child: Container(
@@ -576,23 +886,7 @@ class DashboardPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 26),
-          FilledButton.tonalIcon(
-            onPressed: r == null
-                ? null
-                : () => runAction(context, c.toggleMonitoring),
-            icon: Icon(
-              c.monitoring ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              size: 18,
-            ),
-            label: Text(
-              c.monitoring
-                  ? 'Background monitoring is on'
-                  : 'Turn on background monitoring',
-            ),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-            ),
-          ),
+          _ChargingControls(c: c),
           const SectionLabel('Live readings'),
           DashboardMetricGrid(c: c, items: items),
           const SizedBox(height: 14),
@@ -1018,309 +1312,6 @@ Widget infoRow(BuildContext context, String label, String value) => Padding(
   ),
 );
 
-class HistoryPage extends StatefulWidget {
-  const HistoryPage({super.key, required this.c});
-  final BatteryController c;
-  @override
-  State<HistoryPage> createState() => _HistoryPageState();
-}
-
-class _HistoryPageState extends State<HistoryPage> {
-  @override
-  Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final since = now.subtract(const Duration(days: 3));
-    // A rolling 72-hour range spans partial calendar days at both ends.
-    final days =
-        DateTime.utc(
-          now.year,
-          now.month,
-          now.day,
-        ).difference(DateTime.utc(since.year, since.month, since.day)).inDays +
-        1;
-    final window = HistoryWindow(
-      daily: widget.c.daily,
-      sessions: widget.c.sessions,
-      days: days,
-      now: now,
-      since: since,
-    );
-    final firstDay = window.firstDay;
-    final points = widget.c.points;
-    final bars = window.chargedPerDay;
-    final charged = window.chargedPercent;
-    final pluggedMs = window.pluggedMs;
-    final recent = points
-        .where(
-          (p) =>
-              p['time'] is num &&
-              (p['time'] as num).isFinite &&
-              (p['time'] as num) >
-                  now
-                      .subtract(const Duration(hours: 1))
-                      .millisecondsSinceEpoch &&
-              (p['time'] as num) <= now.millisecondsSinceEpoch,
-        )
-        .toList();
-    return RefreshIndicator(
-      onRefresh: widget.c.refreshHistory,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
-        children: [
-          if (widget.c.historyLoading)
-            const LinearProgressIndicator(minHeight: 2),
-          if (widget.c.historyError != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                widget.c.historyError!,
-                style: const TextStyle(color: coral, fontSize: 12),
-              ),
-            ),
-          const SectionLabel('Last 3 days'),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: Text(
-              'Up to 10 sessions. Sessions expire 72 hours after they start, together with their readings and daily totals.',
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.5,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Panel(
-            child: Wrap(
-              spacing: 22,
-              runSpacing: 20,
-              children: [
-                stat(
-                  window.hasObservations
-                      ? (charged / 100).toStringAsFixed(2)
-                      : '—',
-                  'Est. cycles',
-                ),
-                stat(
-                  window.hasObservations ? '+${charged.round()}%' : '—',
-                  'Charged',
-                ),
-                stat(
-                  window.hasObservations ? durationLabel(pluggedMs) : '—',
-                  'Plugged in',
-                ),
-                stat(
-                  pluggedMs > 0
-                      ? '${(charged / (pluggedMs / 3600000)).toStringAsFixed(1)}%/h'
-                      : '—',
-                  'Avg. plugged rate',
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              window.hasObservations
-                  ? 'Based on recorded intervals · cycles = charged % ÷ 100'
-                  : widget.c.historyLoaded
-                  ? 'No recorded intervals in this period yet.'
-                  : 'Loading saved history…',
-              style: TextStyle(
-                fontSize: 10,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          const SectionLabel(
-            'Daily charging',
-            trailing: Text(
-              '% gained',
-              style: TextStyle(fontSize: 11, color: mint),
-            ),
-          ),
-          Panel(
-            child: Column(
-              children: [
-                SizedBox(
-                  height: 150,
-                  width: double.infinity,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CustomPaint(
-                        painter: BarsPainter(
-                          bars,
-                          Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      if (charged == 0)
-                        Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(18),
-                            child: Text(
-                              'No charging recorded in this period',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: List.generate(days, (i) {
-                    final d = DateTime(
-                      firstDay.year,
-                      firstDay.month,
-                      firstDay.day + i,
-                    );
-                    return Text(
-                      '${d.day}/${d.month}',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    );
-                  }),
-                ),
-                if (charged == 0)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 16),
-                    child: Text(
-                      'Charge while recording to build this chart. Blank days have no charging bars.',
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          SectionLabel(
-            'Recent telemetry',
-            trailing: TextButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      TelemetryPage(c: widget.c, initialMetric: 'temperatureC'),
-                ),
-              ),
-              child: const Text('Explore'),
-            ),
-          ),
-          Panel(
-            child: Column(
-              children: [
-                if (recent.length < 2)
-                  const SizedBox(
-                    height: 110,
-                    child: Center(
-                      child: Text(
-                        'Your readings will appear here as they arrive.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  )
-                else ...[
-                  telemetryGraph(
-                    context,
-                    recent,
-                    'temperatureC',
-                    widget.c.flag('fahrenheit')
-                        ? 'Temperature · °F'
-                        : 'Temperature · °C',
-                    mint,
-                    widget.c.flag('fahrenheit')
-                        ? (v) => v * 1.8 + 32
-                        : (v) => v,
-                  ),
-                  const SizedBox(height: 20),
-                  telemetryGraph(
-                    context,
-                    recent,
-                    'powerW',
-                    'Net power · W',
-                    coral,
-                    (v) => v * (widget.c.flag('dualCell') ? 2 : 1),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Text(
-                  widget.c.monitoring
-                      ? 'Recording in the background every 30 seconds'
-                      : 'Recording while open. Enable monitoring to record in the background.',
-                  style: TextStyle(
-                    fontSize: 10,
-                    height: 1.5,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  recent.isEmpty
-                      ? 'No readings recorded in the last hour'
-                      : '${recent.length} saved readings · latest ${timeLabel(recent.last['time'] as num)}',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SectionLabel('Sessions'),
-          if (window.sessions.isEmpty)
-            const Panel(
-              child: Text(
-                'No sessions recorded in this period. Sessions are recorded while the app is open or background monitoring is enabled.',
-                style: TextStyle(fontSize: 13, height: 1.7),
-              ),
-            ),
-          ...window.sessions.map(
-            (s) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: sessionCard(
-                context,
-                s,
-                dualCell: widget.c.flag('dualCell'),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget stat(String value, String label) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        value,
-        style: const TextStyle(
-          fontSize: 21,
-          fontWeight: FontWeight.w500,
-          letterSpacing: -.6,
-        ),
-      ),
-      const SizedBox(height: 5),
-      Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    ],
-  );
-}
-
 class TelemetryPage extends StatefulWidget {
   const TelemetryPage({
     super.key,
@@ -1335,11 +1326,20 @@ class TelemetryPage extends StatefulWidget {
 
 class _TelemetryPageState extends State<TelemetryPage> {
   late final Set<String> selected = {widget.initialMetric};
+  int _revision = 0;
+  void _visibility() => widget.c.setTelemetryVisible(
+    true,
+    needsHistory: selected.any((key) => key != 'currentMa'),
+    historySeconds:
+        selected.any((key) => key != 'currentMa' && key != 'temperatureC')
+        ? 5
+        : 60,
+  );
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.c.setTelemetryVisible(true);
+      if (mounted) _visibility();
     });
   }
 
@@ -1349,175 +1349,163 @@ class _TelemetryPageState extends State<TelemetryPage> {
     super.dispose();
   }
 
+  Future<void> _refresh() async {
+    await widget.c.refreshHistory();
+    if (mounted) setState(() => _revision++);
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Telemetry')),
-    body: SafeArea(
-      child: ListenableBuilder(
-        listenable: widget.c,
-        builder: (context, _) {
-          final c = widget.c;
-          final now = DateTime.now().millisecondsSinceEpoch;
-          final points = c.points
-              .where(
-                (p) =>
-                    p['time'] is num &&
-                    (p['time'] as num) > now - 3600000 &&
-                    (p['time'] as num) <= now,
-              )
-              .toList();
-          return Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 680),
-              child: RefreshIndicator(
-                onRefresh: c.refreshHistory,
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(24),
-                  children: [
-                    const Text(
-                      'Choose the readings to compare',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Last hour · separate scales, shared timestamps',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: graphMetrics.entries
-                          .map(
-                            (metric) => FilterChip(
-                              key: ValueKey('graph-toggle-${metric.value}'),
-                              label: Text(metric.key),
-                              selected: selected.contains(metric.value),
-                              onSelected: (on) => setState(() {
+  Widget build(BuildContext context) {
+    final c = widget.c;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Telemetry')),
+      body: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(24),
+                children: [
+                  const Text(
+                    'Choose the readings to compare',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    selected.length == 1 && selected.contains('currentMa')
+                        ? 'Live current · choose a range below'
+                        : 'Other metrics: last hour · current has its own range',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: graphMetrics.entries
+                        .map(
+                          (metric) => FilterChip(
+                            key: ValueKey('graph-toggle-${metric.value}'),
+                            label: Text(metric.key),
+                            selected: selected.contains(metric.value),
+                            onSelected: (on) {
+                              setState(() {
                                 if (on) {
                                   selected.add(metric.value);
                                 } else {
                                   selected.remove(metric.value);
                                 }
-                              }),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                    if (c.historyLoading)
-                      const LinearProgressIndicator(minHeight: 2),
-                    if (c.historyError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Text(
-                          c.historyError!,
-                          style: const TextStyle(color: coral),
-                        ),
-                      ),
-                    if (selected.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 40),
-                        child: Text(
-                          'Select a metric to display its recorded graph.',
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ...graphMetrics.entries
-                        .where((e) => selected.contains(e.value))
-                        .map((metric) {
-                          final (
-                            label,
-                            color,
-                            transform,
-                          ) = switch (metric.value) {
-                            'temperatureC' => (
-                              c.flag('fahrenheit')
-                                  ? 'Temperature · °F'
-                                  : 'Temperature · °C',
-                              mint,
-                              (double v) =>
-                                  c.flag('fahrenheit') ? v * 1.8 + 32 : v,
-                            ),
-                            'powerW' => (
-                              'Net power · W',
-                              coral,
-                              (double v) => v * (c.flag('dualCell') ? 2 : 1),
-                            ),
-                            'voltageMv' => (
-                              c.flag('millivolts')
-                                  ? 'Voltage · mV'
-                                  : 'Voltage · V',
-                              const Color(0xFFE3B86A),
-                              (double v) =>
-                                  v *
-                                  (c.flag('dualCell') ? 2 : 1) /
-                                  (c.flag('millivolts') ? 1 : 1000),
-                            ),
-                            _ => (
-                              'Current · mA',
-                              const Color(0xFFA5A0FF),
-                              (double v) => v,
-                            ),
-                          };
-                          return Padding(
-                            key: ValueKey('graph-panel-${metric.value}'),
-                            padding: const EdgeInsets.only(top: 18),
-                            child: Panel(
-                              child: Column(
-                                children: [
-                                  telemetryGraph(
-                                    context,
-                                    points,
-                                    metric.value,
-                                    label,
-                                    color,
-                                    transform,
-                                  ),
-                                  if (points.length > 1) ...[
-                                    const SizedBox(height: 12),
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          clockLabel(
-                                            points.first['time'] as num,
-                                          ),
-                                          style: const TextStyle(fontSize: 10),
-                                        ),
-                                        Text(
-                                          clockLabel(
-                                            points.last['time'] as num,
-                                          ),
-                                          style: const TextStyle(fontSize: 10),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ],
+                              });
+                              _visibility();
+                            },
+                          ),
+                        )
+                        .toList(),
+                  ),
+                  if (selected.any((key) => key != 'currentMa'))
+                    ListenableBuilder(
+                      listenable: c.historyChanges,
+                      builder: (_, _) => Column(
+                        children: [
+                          if (!c.historyLoaded && c.historyLoading)
+                            const LinearProgressIndicator(minHeight: 2),
+                          if (c.historyError != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: Text(
+                                c.historyError!,
+                                style: const TextStyle(color: coral),
                               ),
                             ),
-                          );
-                        }),
-                    const SizedBox(height: 20),
-                    Text(
-                      '${points.length} saved readings in this window. Gaps and unsupported readings are left blank.',
-                      style: const TextStyle(fontSize: 11, height: 1.6),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
+                  if (selected.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 40),
+                      child: Text(
+                        'Select a metric to display its recorded graph.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ...graphMetrics.entries
+                      .where((e) => selected.contains(e.value))
+                      .map((metric) {
+                        if (metric.value == 'currentMa') {
+                          return Padding(
+                            key: const ValueKey('graph-panel-currentMa'),
+                            padding: const EdgeInsets.only(top: 18),
+                            child: Panel(child: CurrentChart(c: c)),
+                          );
+                        }
+                        final (
+                          label,
+                          color,
+                          transform,
+                        ) = switch (metric.value) {
+                          'temperatureC' => (
+                            c.flag('fahrenheit')
+                                ? 'Temperature · °F'
+                                : 'Temperature · °C',
+                            mint,
+                            (double v) =>
+                                c.flag('fahrenheit') ? v * 1.8 + 32 : v,
+                          ),
+                          'powerW' => (
+                            'Net power · W',
+                            coral,
+                            (double v) => v * (c.flag('dualCell') ? 2 : 1),
+                          ),
+                          'voltageMv' => (
+                            c.flag('millivolts')
+                                ? 'Voltage · mV'
+                                : 'Voltage · V',
+                            const Color(0xFFE3B86A),
+                            (double v) =>
+                                v *
+                                (c.flag('dualCell') ? 2 : 1) /
+                                (c.flag('millivolts') ? 1 : 1000),
+                          ),
+                          _ => throw StateError('Unknown telemetry metric'),
+                        };
+                        return Padding(
+                          key: ValueKey('graph-panel-${metric.value}'),
+                          padding: const EdgeInsets.only(top: 18),
+                          child: Panel(
+                            child: SavedMetricGraph(
+                              source: c.historyPoints,
+                              initialPoints: c.points,
+                              metric: metric.value,
+                              label: label,
+                              color: color,
+                              transform: transform,
+                              active: () => c.appActive,
+                              recentHour: true,
+                              viewKey:
+                                  '$_revision/${c.flag('fahrenheit')}/${c.flag('dualCell')}/${c.flag('millivolts')}',
+                            ),
+                          ),
+                        );
+                      }),
+                  if (selected.any((key) => key != 'currentMa'))
+                    const Padding(
+                      padding: EdgeInsets.only(top: 20),
+                      child: Text(
+                        'Saved readings from the last hour. Gaps and unsupported readings stay blank.',
+                        style: TextStyle(fontSize: 11, height: 1.6),
+                      ),
+                    ),
+                ],
               ),
             ),
-          );
-        },
+          ),
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 String clockLabel(num millis) {
@@ -1532,42 +1520,13 @@ Widget telemetryGraph(
   String label,
   Color color,
   double Function(double) transform,
-) {
-  final values = points
-      .where((p) => p[key] is num && (p[key] as num).isFinite)
-      .map((p) => transform((p[key] as num).toDouble()))
-      .toList();
-  return Column(
-    children: [
-      Row(
-        children: [
-          Expanded(
-            child: Text(label, style: TextStyle(fontSize: 11, color: color)),
-          ),
-          Text(
-            values.isEmpty
-                ? 'Unavailable'
-                : '${values.reduce(math.min).toStringAsFixed(1)} – ${values.reduce(math.max).toStringAsFixed(1)}',
-            style: const TextStyle(fontSize: 10),
-          ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      SizedBox(
-        height: 72,
-        width: double.infinity,
-        child: values.length < 2
-            ? const Center(
-                child: Text(
-                  'Collecting supported readings…',
-                  style: TextStyle(fontSize: 11),
-                ),
-              )
-            : CustomPaint(painter: LinePainter(points, key, color, transform)),
-      ),
-    ],
-  );
-}
+) => MetricChart(
+  points: points,
+  metric: key,
+  label: label,
+  color: color,
+  transform: transform,
+);
 
 String timeLabel(num millis) {
   final d = DateTime.fromMillisecondsSinceEpoch(millis.toInt());
@@ -1704,74 +1663,6 @@ class BarsPainter extends CustomPainter {
   bool shouldRepaint(covariant BarsPainter oldDelegate) => true;
 }
 
-class LinePainter extends CustomPainter {
-  LinePainter(this.points, this.keyName, this.color, this.transform);
-  final List<Map<String, dynamic>> points;
-  final String keyName;
-  final Color color;
-  final double Function(double) transform;
-  @override
-  void paint(Canvas canvas, Size size) {
-    final valid = points
-        .where(
-          (p) =>
-              p[keyName] is num &&
-              (p[keyName] as num).isFinite &&
-              p['time'] is num,
-        )
-        .toList();
-    if (valid.length < 2) return;
-    final values = valid
-        .map((p) => transform((p[keyName] as num).toDouble()))
-        .toList();
-    final minimum = values.reduce(math.min), maximum = values.reduce(math.max);
-    final padding = math.max((maximum - minimum) * .1, .05);
-    final low = minimum - padding, high = maximum + padding;
-    final timed = points.where((p) => p['time'] is num).toList();
-    final first = (timed.first['time'] as num).toDouble(),
-        last = (timed.last['time'] as num).toDouble();
-    final path = Path();
-    Map<String, dynamic>? previous;
-    for (final point in points) {
-      final raw = point[keyName];
-      if (raw is! num || !raw.isFinite || point['time'] is! num) {
-        previous = null;
-        continue;
-      }
-      final x =
-          ((point['time'] as num) - first) /
-          math.max(1, last - first) *
-          size.width;
-      final y =
-          size.height -
-          (transform(raw.toDouble()) - low) / (high - low) * size.height;
-      final gap =
-          previous == null ||
-          ((point['time'] as num) - (previous['time'] as num) > 120000 ||
-              point['sessionId'] != previous['sessionId']);
-      if (gap) {
-        path.moveTo(x, y);
-        canvas.drawCircle(Offset(x, y), 2, Paint()..color = color);
-      } else {
-        path.lineTo(x, y);
-      }
-      previous = point;
-    }
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..strokeWidth = 2
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant LinePainter oldDelegate) => true;
-}
-
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.c});
   final BatteryController c;
@@ -1779,6 +1670,39 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(24, 0, 24, 30),
     children: [
+      const SectionLabel('Alert sounds'),
+      Panel(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Column(
+          children: [
+            toggle(context, 'Alarm sound', 'sound'),
+            _alertSound(
+              context,
+              'charge',
+              'Charging limit',
+              'Charging limit voice',
+            ),
+            _alertSound(
+              context,
+              'heat',
+              'Battery temperature',
+              'Battery temperature voice',
+            ),
+            _alertSound(context, 'low', 'Low battery', 'Low battery voice'),
+          ],
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 9),
+        child: Text(
+          'Tap an alert to choose an audio file or system tone. Preview plays once, up to 30 seconds, at alarm volume.',
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.5,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
       const SectionLabel('Appearance & units'),
       Panel(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
@@ -1829,6 +1753,44 @@ class SettingsPage extends StatelessWidget {
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
+      const SectionLabel('Charging dashboard'),
+      Panel(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Column(
+          children: [
+            toggle(
+              context,
+              'Enable charging dashboard',
+              'chargingDashboard',
+              subtitle:
+                  'Open manually while plugged in. Can appear above the lock screen; your device stays locked. Normal screen timeout applies.',
+            ),
+            toggle(
+              context,
+              'Charging dashboard on lock screen',
+              'chargingScreenSaver',
+              subtitle:
+                  'Use Android’s screen saver while charging and idle. Select Fittery in system settings. Start timing and lock behavior depend on your phone.',
+            ),
+            if (c.flag('chargingScreenSaver'))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: OutlinedButton.icon(
+                  key: const ValueKey('screen-saver-setup'),
+                  onPressed: () =>
+                      runAction(context, () => c.action('screenSaverSettings')),
+                  icon: const Icon(Icons.settings_display_outlined),
+                  label: const Text('Set up Android screen saver'),
+                ),
+              ),
+            if (c.flag('chargingDashboard'))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: ChargingDashboardEntry(c: c),
+              ),
+          ],
+        ),
+      ),
       const SectionLabel('Alerts & thresholds'),
       Panel(
         child: Column(
@@ -1852,7 +1814,7 @@ class SettingsPage extends StatelessWidget {
               5,
               50,
               '%',
-              'Notify when battery drops to the limit',
+              'Optional extra alert · off by default',
             ),
             const Divider(height: 32),
             alert(
@@ -1877,50 +1839,11 @@ class SettingsPage extends StatelessWidget {
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
-      const SectionLabel('Alarm & notifications'),
+      const SectionLabel('Notifications'),
       Panel(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         child: Column(
           children: [
-            toggle(context, 'Alarm sound', 'sound'),
-            ListTile(
-              title: const Text('Alarm tone', style: TextStyle(fontSize: 14)),
-              subtitle: Text(
-                c.settings['toneName']?.toString() ?? 'Default alarm',
-                style: const TextStyle(fontSize: 11),
-              ),
-              trailing: const Icon(Icons.chevron_right, size: 18),
-              onTap: () => runAction(context, () => c.action('pickTone')),
-            ),
-            ListTile(
-              key: const ValueKey('alarm-preview'),
-              leading: IconButton(
-                key: const ValueKey('alarm-preview-button'),
-                tooltip: c.previewPlaying ? 'Stop preview' : 'Play preview',
-                icon: Icon(
-                  c.previewPlaying
-                      ? Icons.pause_circle_outline
-                      : Icons.play_circle_outline,
-                  color: mint,
-                ),
-                onPressed: c.previewBusy
-                    ? null
-                    : () => runAction(context, c.togglePreview),
-              ),
-              title: Text(
-                c.previewPlaying ? 'Stop preview' : 'Preview alarm',
-                style: const TextStyle(fontSize: 14),
-              ),
-              subtitle: Text(
-                c.previewPlaying
-                    ? 'Playing · tap pause to stop'
-                    : 'Plays for 3 seconds at alarm volume',
-                style: const TextStyle(fontSize: 11),
-              ),
-              onTap: c.previewBusy
-                  ? null
-                  : () => runAction(context, c.togglePreview),
-            ),
             choice(
               context,
               'Notification format',
@@ -1933,6 +1856,37 @@ class SettingsPage extends StatelessWidget {
                 'Time remaining',
               ],
               Icons.notifications_outlined,
+            ),
+            ListTile(
+              leading: const Icon(Icons.update_rounded),
+              title: const Text(
+                'Notification refresh interval',
+                style: TextStyle(fontSize: 14),
+              ),
+              subtitle: const Text(
+                'Updates the monitor notification. Recording stays at 3 seconds. Android may delay updates while asleep.',
+                style: TextStyle(fontSize: 11),
+              ),
+              trailing: DropdownButton<int>(
+                key: const ValueKey('notification-refresh-interval'),
+                value:
+                    (c.settings['notificationIntervalSeconds'] as num?)
+                        ?.toInt() ??
+                    1,
+                items: const [
+                  DropdownMenuItem(value: 1, child: Text('1 second')),
+                  DropdownMenuItem(value: 3, child: Text('3 seconds')),
+                  DropdownMenuItem(value: 5, child: Text('5 seconds')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    runAction(
+                      context,
+                      () => c.save('notificationIntervalSeconds', value),
+                    );
+                  }
+                },
+              ),
             ),
             toggle(context, 'Show on lock screen', 'lockScreen'),
             ListTile(
@@ -1953,6 +1907,44 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
+      const SectionLabel('Recording history'),
+      Panel(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Column(
+          children: [
+            toggle(
+              context,
+              'Keep recordings until I delete them',
+              'keepRecordings',
+              subtitle:
+                  'Off by default: completed recordings expire 30 days after creation. Active recordings are protected. Turning this off removes expired recordings.',
+            ),
+            ListTile(
+              leading: const Icon(Icons.history_rounded),
+              title: const Text(
+                'Past recordings',
+                style: TextStyle(fontSize: 14),
+              ),
+              subtitle: const Text(
+                'Browse by date, view graphs, rename or delete',
+                style: TextStyle(fontSize: 11),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => Scaffold(
+                    appBar: AppBar(title: const Text('Past recordings')),
+                    body: AnimatedBuilder(
+                      animation: c,
+                      builder: (_, _) => HistoryPage(c: c),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
       const SectionLabel('System & reliability'),
       Panel(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
@@ -1967,7 +1959,7 @@ class SettingsPage extends StatelessWidget {
               subtitle: Text(
                 c.optimized
                     ? 'Unrestricted background access'
-                    : 'Allow unrestricted battery use',
+                    : 'Review background restrictions in Android settings',
                 style: const TextStyle(fontSize: 11),
               ),
               trailing: const Icon(Icons.open_in_new, size: 16),
@@ -2012,7 +2004,7 @@ class SettingsPage extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.delete_outline, color: coral),
               title: const Text(
-                'Clear charge history',
+                'Clear all recordings',
                 style: TextStyle(fontSize: 14, color: coral),
               ),
               onTap: () async {
@@ -2021,7 +2013,7 @@ class SettingsPage extends StatelessWidget {
                   builder: (ctx) => AlertDialog(
                     title: const Text('Clear all history?'),
                     content: const Text(
-                      'This permanently removes recorded sessions and charts from this device. A new session will begin with the next reading.',
+                      'This permanently removes all recordings and saved readings from this device. If monitoring is on, a new recording will begin.',
                     ),
                     actions: [
                       TextButton(
@@ -2046,6 +2038,32 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
+      const SectionLabel('Welcome'),
+      Panel(
+        padding: EdgeInsets.zero,
+        child: ListTile(
+          key: const ValueKey('view-welcome-tutorial'),
+          leading: const Icon(Icons.auto_awesome_outlined),
+          title: const Text(
+            'View Welcome Tutorial',
+            style: TextStyle(fontSize: 14),
+          ),
+          subtitle: const Text(
+            'Explore Fittery and change your welcome preference',
+            style: TextStyle(fontSize: 11),
+          ),
+          trailing: const Icon(Icons.chevron_right, size: 18),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (routeContext) => OnboardingPage(
+                c: c,
+                replay: true,
+                onFinished: () => Navigator.of(routeContext).pop(),
+              ),
+            ),
+          ),
+        ),
+      ),
       AboutSection(c: c),
       const SizedBox(height: 28),
       Text(
@@ -2066,14 +2084,124 @@ class SettingsPage extends StatelessWidget {
     String label,
     String key, {
     String? subtitle,
-  }) => SwitchListTile(
-    title: Text(label, style: const TextStyle(fontSize: 14)),
-    subtitle: subtitle == null
-        ? null
-        : Text(subtitle, style: const TextStyle(fontSize: 11)),
-    value: c.flag(key),
-    onChanged: (v) => runAction(context, () => c.save(key, v)),
+  }) => MergeSemantics(
+    child: ListTile(
+      key: ValueKey('setting-$key'),
+      title: Text(label, style: const TextStyle(fontSize: 14)),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle, style: const TextStyle(fontSize: 11)),
+      trailing: SmoothToggle(
+        value: c.flag(key),
+        onChanged: (v) => runAction(context, () => c.save(key, v)),
+      ),
+      onTap: () => runAction(context, () => c.save(key, !c.flag(key))),
+    ),
   );
+
+  Widget _alertSound(
+    BuildContext context,
+    String event,
+    String title,
+    String defaultName,
+  ) {
+    final playing = c.previewPlaying && c.previewEvent == event;
+    final silent = c.settings['${event}ToneSource'] == 'silent';
+    return ListTile(
+      key: ValueKey('alarm-tone-$event'),
+      title: Text(title, style: const TextStyle(fontSize: 14)),
+      subtitle: Text(
+        c.settings['${event}ToneName']?.toString() ?? defaultName,
+        style: const TextStyle(fontSize: 11),
+      ),
+      leading: IconButton(
+        key: ValueKey('alarm-preview-$event'),
+        tooltip: playing ? 'Stop $title preview' : 'Preview $title sound',
+        onPressed: c.previewBusy || silent
+            ? null
+            : () => runAction(context, () => c.togglePreview(event)),
+        icon: Icon(
+          playing ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+          color: silent ? null : mint,
+        ),
+      ),
+      trailing: const Icon(Icons.chevron_right, size: 18),
+      onTap: () => _chooseAlarmTone(context, event, title),
+    );
+  }
+
+  Future<void> _chooseAlarmTone(
+    BuildContext context,
+    String event,
+    String title,
+  ) async {
+    final method = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    '$title sound',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  key: const ValueKey('alarm-tone-default'),
+                  leading: const Icon(Icons.record_voice_over_outlined),
+                  title: const Text('Default voice'),
+                  subtitle: const Text(
+                    'Use the included recording for this alert',
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, 'defaultTone'),
+                ),
+                ListTile(
+                  key: const ValueKey('alarm-tone-system'),
+                  leading: const Icon(Icons.alarm_rounded),
+                  title: const Text('System alarm tones'),
+                  subtitle: const Text(
+                    'Choose a system tone, default alarm, or Silent',
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, 'pickTone'),
+                ),
+                ListTile(
+                  key: const ValueKey('alarm-tone-file'),
+                  leading: const Icon(Icons.audio_file_outlined),
+                  title: const Text('Choose audio file'),
+                  subtitle: const Text(
+                    'Choose music or another audio file saved on your phone',
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, 'pickAudioFile'),
+                ),
+                ListTile(
+                  key: const ValueKey('alarm-tone-silent'),
+                  leading: const Icon(Icons.volume_off_outlined),
+                  title: const Text('Silent'),
+                  subtitle: const Text(
+                    'Keep the notification without an alarm sound',
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, 'silentTone'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (method != null && context.mounted) {
+      await runAction(context, () => c.action(method, event: event));
+    }
+  }
 
   Widget choice(
     BuildContext context,

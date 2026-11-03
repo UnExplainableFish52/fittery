@@ -10,7 +10,7 @@ import java.util.Locale
 import kotlin.math.abs
 
 /** Accessed only on BatteryEngine's single worker. No database work on the UI thread. */
-class BatteryStore(context: Context, private val clock: () -> Long = System::currentTimeMillis) : SQLiteOpenHelper(context, "battery.db", null, 3) {
+class BatteryStore(context: Context, private val clock: () -> Long = System::currentTimeMillis) : SQLiteOpenHelper(context, "battery.db", null, 4) {
     companion object {
         const val RETENTION_MS = 3L * 86400000
         const val SESSION_LIMIT = 10
@@ -21,7 +21,7 @@ class BatteryStore(context: Context, private val clock: () -> Long = System::cur
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE sessions (id INTEGER PRIMARY KEY, kind TEXT, source INTEGER, startTime INTEGER, endTime INTEGER, startLevel INTEGER, endLevel INTEGER, powerSum REAL DEFAULT 0, powerCount INTEGER DEFAULT 0, gap INTEGER DEFAULT 0, ended INTEGER DEFAULT 0, powerWms REAL DEFAULT 0, powerMs INTEGER DEFAULT 0)")
-        db.execSQL("CREATE TABLE points (time INTEGER PRIMARY KEY, sessionId INTEGER, level INTEGER, temperatureC REAL, powerW REAL, plugged INTEGER, status TEXT, voltageMv REAL, currentMa REAL, chargeCounterMah REAL)")
+        db.execSQL("CREATE TABLE points (time INTEGER PRIMARY KEY, sessionId INTEGER, level INTEGER, temperatureC REAL, powerW REAL, plugged INTEGER, status TEXT, voltageMv REAL, currentMa REAL, chargeCounterMah REAL, sampleIntervalMs INTEGER DEFAULT 30000, currentConvention TEXT)")
         db.execSQL("CREATE INDEX point_session ON points(sessionId)")
         createDaily(db)
     }
@@ -41,6 +41,10 @@ class BatteryStore(context: Context, private val clock: () -> Long = System::cur
             deleteExpired(db, clock())
             db.execSQL("DELETE FROM points WHERE sessionId NOT IN (SELECT id FROM sessions)")
             rebuildDaily(db)
+        }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE points ADD COLUMN sampleIntervalMs INTEGER DEFAULT 30000")
+            db.execSQL("ALTER TABLE points ADD COLUMN currentConvention TEXT")
         }
     }
 
@@ -143,6 +147,8 @@ class BatteryStore(context: Context, private val clock: () -> Long = System::cur
             if (power != null) db.execSQL("UPDATE sessions SET powerSum=powerSum+?, powerCount=powerCount+1 WHERE id=?", arrayOf<Any?>(abs(power), activeId))
             val point = ContentValues().apply {
                 put("time", time); put("sessionId", activeId); put("plugged", plugged); put("status", reading["status"] as String)
+                put("sampleIntervalMs", (reading["sampleIntervalMs"] as? Number)?.toLong() ?: 30000L)
+                put("currentConvention", reading["currentConvention"] as? String)
                 if (level == null) putNull("level") else put("level", level)
                 (reading["temperatureC"] as Number?)?.let { put("temperatureC", it.toDouble()) }
                 power?.let { put("powerW", it) }
@@ -249,6 +255,22 @@ class BatteryStore(context: Context, private val clock: () -> Long = System::cur
             while (c.moveToNext()) daily.add(mapOf("day" to c.getString(0), "charged" to c.getDouble(1), "pluggedMs" to c.getLong(2)))
         }
         return mapOf("points" to points, "sessions" to sessions, "daily" to daily)
+    }
+
+    fun currentHistory(since: Long? = null): List<Map<String, Any?>> {
+        val db = writableDatabase
+        val now = clock()
+        prune(db, now, force = true)
+        val first = maxOf(now - 6L * 3600000, since ?: 0)
+        val samples = mutableListOf<Map<String, Any?>>()
+        db.rawQuery("SELECT time,currentMa,voltageMv,sessionId,sampleIntervalMs,currentConvention FROM points WHERE time>=? AND time<=? ORDER BY time", arrayOf(first.toString(),now.toString())).use { c ->
+            while (c.moveToNext()) samples.add(mapOf(
+                "time" to c.getLong(0), "currentMa" to if (c.isNull(1)) null else c.getDouble(1),
+                "voltageMv" to if (c.isNull(2)) null else c.getDouble(2), "sessionId" to c.getLong(3),
+                "sampleIntervalMs" to c.getLong(4), "currentConvention" to c.getString(5)
+            ))
+        }
+        return samples
     }
 
     fun recentChargingSamples(): List<ChargeTimeEstimator.Sample> {

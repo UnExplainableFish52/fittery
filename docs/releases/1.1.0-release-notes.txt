@@ -1,0 +1,6 @@
+Fittery 1.1.0 - Neon Tide
+- New optional charging dashboard with a teal design, live readings and rough charging-time estimates.
+- Android screen saver integration while charging.
+- Dedicated alert voices and separate custom sounds for charging limit, temperature and low battery.
+- Easier dashboard access and smoother controls.
+- Added a FAQ about supporting the developer with a personal message.

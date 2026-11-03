@@ -63,10 +63,17 @@ void main() {
     'The preview icon plays, stops, and resets when native playback ends',
     (tester) async {
       final c = controller();
-      await tester.pumpWidget(FitteryApp(controller: c));
+      await tester.pumpWidget(
+        FitteryApp(
+          controller: c
+            ..ready = true
+            ..onboardingCompleted = true
+            ..showOnboardingOnLaunch = false,
+        ),
+      );
       await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();
-      final button = find.byKey(const ValueKey('alarm-preview-button'));
+      final button = find.byKey(const ValueKey('alarm-preview-charge'));
       await tester.scrollUntilVisible(
         button,
         450,
@@ -76,7 +83,7 @@ void main() {
       await tester.tap(button);
       await tester.pumpAndSettle();
       expect(c.previewPlaying, isTrue);
-      expect(find.byIcon(Icons.pause_circle_outline), findsOneWidget);
+      expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
       await tester.tap(button);
       await tester.pumpAndSettle();
       expect(c.previewPlaying, isFalse);
@@ -94,7 +101,14 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(c.previewPlaying, isFalse);
-      expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+      expect(find.byIcon(Icons.play_circle_outline), findsNWidgets(3));
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(c.previewEvent, 'charge');
+      await tester.tap(find.byKey(const ValueKey('alarm-preview-heat')));
+      await tester.pumpAndSettle();
+      expect(c.previewEvent, 'heat');
+      expect(c.previewPlaying, isTrue);
       await tester.pumpWidget(const SizedBox());
       c.dispose();
     },
@@ -104,7 +118,14 @@ void main() {
     'A metric opens Telemetry and each graph can be toggled independently',
     (tester) async {
       final c = controller();
-      await tester.pumpWidget(FitteryApp(controller: c));
+      await tester.pumpWidget(
+        FitteryApp(
+          controller: c
+            ..ready = true
+            ..onboardingCompleted = true
+            ..showOnboardingOnLaunch = false,
+        ),
+      );
       final voltage = find.byKey(const ValueKey('metric-voltageMv'));
       await tester.ensureVisible(voltage);
       await tester.pumpAndSettle();
@@ -125,10 +146,19 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('graph-toggle-temperatureC')));
       await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('graph-panel-temperatureC')),
+        180,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(
         find.byKey(const ValueKey('graph-panel-temperatureC')),
         findsOneWidget,
       );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('graph-toggle-voltageMv')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('graph-toggle-voltageMv')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('graph-panel-voltageMv')), findsNothing);

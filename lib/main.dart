@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'src/app.dart';
 import 'src/controller.dart';
+import 'src/charging_dream.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,4 +20,15 @@ Future<void> main() async {
   await controller.loadInitial();
   runApp(FitteryApp(controller: controller));
   WidgetsBinding.instance.addPostFrameCallback((_) => controller.connect());
+}
+
+@pragma('vm:entry-point')
+Future<void> chargingDreamMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final controller = BatteryController()..setChargingDashboardVisible(true);
+  await controller.loadInitial();
+  runApp(ChargingDreamApp(controller: controller));
+  WidgetsBinding.instance.addPostFrameCallback(
+    (_) => controller.connect(readingsOnly: true),
+  );
 }

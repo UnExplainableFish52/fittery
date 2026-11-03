@@ -45,6 +45,14 @@ class BatteryStoreTest {
     @Suppress("UNCHECKED_CAST")
     private fun rows(history: Map<String, Any?>, key: String) = history[key] as List<Map<String, Any?>>
 
+    private fun legacyPoints(db: android.database.sqlite.SQLiteDatabase) {
+        db.execSQL("ALTER TABLE points RENAME TO upgraded_points")
+        db.execSQL("CREATE TABLE points (time INTEGER PRIMARY KEY, sessionId INTEGER, level INTEGER, temperatureC REAL, powerW REAL, plugged INTEGER, status TEXT, voltageMv REAL, currentMa REAL, chargeCounterMah REAL)")
+        db.execSQL("INSERT INTO points SELECT time,sessionId,level,temperatureC,powerW,plugged,status,voltageMv,currentMa,chargeCounterMah FROM upgraded_points")
+        db.execSQL("DROP TABLE upgraded_points")
+        db.execSQL("CREATE INDEX point_session ON points(sessionId)")
+    }
+
     @Test fun freshDatabaseContainsNoSeededHistory() {
         val history = store.history(true)
         for (key in listOf("points", "sessions", "daily")) assertTrue(rows(history, key).isEmpty())
@@ -187,6 +195,7 @@ class BatteryStoreTest {
         val old = now - 4L * 86400000
         db.execSQL("INSERT INTO sessions(id,kind,source,startTime,endTime,startLevel,endLevel) VALUES(999,'Charging',1,?,?,10,11)", arrayOf(old,old + 30000))
         db.execSQL("INSERT INTO points(time,sessionId,level,plugged,status) VALUES(?,999,11,1,'Charging')", arrayOf(old + 30000))
+        legacyPoints(db)
         db.version = 2
         store.close()
         store = BatteryStore(context) { now }
@@ -207,6 +216,7 @@ class BatteryStoreTest {
         val db = store.writableDatabase
         db.execSQL("DROP TABLE daily")
         db.execSQL("CREATE TABLE daily (day TEXT PRIMARY KEY, charged REAL DEFAULT 0, pluggedMs INTEGER DEFAULT 0)")
+        legacyPoints(db)
         db.version = 2
         store.close()
         store = BatteryStore(context) { now }
@@ -234,5 +244,34 @@ class BatteryStoreTest {
         assertNull(rows(history, "points").single()["currentMa"])
         record(now + 30000, 72, 1)
         assertEquals(4100.0, rows(store.history(true), "points").last()["voltageMv"])
+    }
+
+    @Test fun sixHourCurrentQueryPreservesSignedAndMissingSamplesAndSurvivesReopening() {
+        val end = now
+        record(end - 7L * 3600000, 50, 1)
+        record(end - 5L * 3600000, 51, 1)
+        record(end, 52, 0, -2.0)
+        now += 1000
+        store.record(mapOf("time" to now,"level" to 52,"plugged" to 0,"status" to "Discharging",
+            "currentMa" to null,"voltageMv" to 4000,"sampleIntervalMs" to 1000L,"currentConvention" to "1000.0/false"))
+        store.close(); store = BatteryStore(context) { now }
+        val samples = store.currentHistory()
+        assertEquals(3,samples.size)
+        assertTrue((samples[1]["currentMa"] as Number).toDouble() < 0)
+        assertNull(samples.last()["currentMa"])
+        assertEquals(1000L,samples.last()["sampleIntervalMs"])
+        assertEquals("1000.0/false",samples.last()["currentConvention"])
+        assertEquals(1,store.currentHistory(now).size)
+    }
+
+    @Test fun versionThreeUpgradeRetainsRealValuesAndDoesNotInventOldSamplingCadence() {
+        record(now, 80, 0, -2.0)
+        val db = store.writableDatabase
+        legacyPoints(db); db.version = 3
+        store.close(); store = BatteryStore(context) { now }
+        val sample = store.currentHistory().single()
+        assertTrue((sample["currentMa"] as Number).toDouble() < 0)
+        assertEquals(30000L,sample["sampleIntervalMs"])
+        assertNull(sample["currentConvention"])
     }
 }

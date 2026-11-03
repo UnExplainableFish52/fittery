@@ -148,6 +148,23 @@ void main() {
     await settle();
   });
 
+  test('Charging dashboard suspends the hidden network observer', () async {
+    final c = BatteryController();
+    await c.initialize();
+    await c.save('networkEnabled', true);
+    await settle();
+    expect(networkCalls.last, 'listen');
+    c.setChargingDashboardVisible(true);
+    await settle();
+    expect(networkCalls.last, 'cancel');
+    c.setChargingDashboardVisible(false);
+    await settle();
+    expect(networkCalls.last, 'listen');
+    expect(methodCalls, isNot(contains('monitoring')));
+    c.dispose();
+    await settle();
+  });
+
   test(
     'Disposing an active dashboard cancels its native network observer',
     () async {
@@ -202,7 +219,14 @@ void main() {
             'model': 'Test phone',
             'totalRamBytes': 8589934592,
           });
-        await tester.pumpWidget(FitteryApp(controller: c));
+        await tester.pumpWidget(
+          FitteryApp(
+            controller: c
+              ..ready = true
+              ..onboardingCompleted = true
+              ..showOnboardingOnLaunch = false,
+          ),
+        );
         await tester.pumpAndSettle();
         expect(find.text('Dashboard'), findsOneWidget);
         expect(find.text('Details'), findsNothing);
