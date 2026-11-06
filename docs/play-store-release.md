@@ -1,9 +1,9 @@
 # Fittery: Google Play release
 
-Current patch prepared November 1, 2026: **1.1.1 (26)**, package **com.fittery.tid52**. This fixes access to alarm silencing from the monitoring notification. Build 26 follows local build 25. Play Console upload history is not accessible from this workspace; version code 26 must be unused for a new upload.
+Current release prepared November 6, 2026: **1.2.0 (27)**, package **com.fittery.tid52**, matching Git tag **v1.2.0**. The owner confirmed that Play version code 27 is unused. See the [comprehensive first GitHub release notes](releases/v1.2.0.md) for features, changes, checksums, and verification results.
 Support/privacy contact: **sharma@saksham.info.np**.
 
-See [1.1.1 build verification](releases/1.1.1-build26.md) for the current signed artifacts and [release notes](releases/1.1.1-release-notes.txt). The [1.1.0 build verification](releases/1.1.0-build25.md), [1.0.0 build verification](releases/1.0.0-build16.md), and [0.8.0 release verification](release-verification.md) remain historical records. The local 0.9.0 candidate was superseded before upload.
+Current signed artifacts are `build/release-ready/1.2.0-build27/Fittery-1.2.0-build27.apk` and `Fittery-1.2.0-build27.aab` in the same directory. The [1.1.1 build verification](releases/1.1.1-build26.md), [1.1.0 build verification](releases/1.1.0-build25.md), [1.0.0 build verification](releases/1.0.0-build16.md), and [0.8.0 release verification](release-verification.md) remain historical records. The local 0.9.0 candidate was superseded before upload.
 
 ## Release sequence
 
@@ -101,3 +101,16 @@ Use the Play-installed release for final acceptance. A local `flutter run --prof
 | Distribution | Install from the intended Play track, confirm displayed version 1.1.1 (26), and verify the update retains preferences and history. |
 
 Automated tests cover sensor normalization, sampling cadence, stale-response ordering, alert rules, history persistence/retention, bounded six-hour chart data, view/lifecycle cancellation, narrow screens and enlarged-text layouts. They do not establish real-device battery drain, OEM reliability, visual approval, Play policy approval, or completion of the required closed test.
+
+## Persistent monitoring update
+
+See [background monitoring](background-monitoring.md) for consent, boot/update recovery, temperature snooze, updated demonstration steps, and device acceptance checks. Update the existing foreground-service declaration and video to reflect these behaviors before release.
+
+
+## v1.2.0+27 submission
+
+Code 27 was confirmed unused by the owner. Local cosmic-build27/build28 folders are previous local artifacts and must not be overwritten or treated as proof of a Play upload.
+
+Update the specialUse declaration to describe user-started battery recording and independent broadcast-driven threshold alerts. Provide a video link demonstrating: Settings introduction; Enable Background Alerts; thresholds and selected sounds; Monitor Mode OFF; leaving the UI and receiving an alarm; explicit stop; Monitor Mode ON with both controls independent. Explain that delayed or interrupted work can miss timely charging/temperature reminders. Google reviews specialUse eligibility; do not describe approval as guaranteed.
+
+Run Flutter analysis/tests, native tests, release lint, release APK/AAB builds and tools/verify_android_bundle.py. Physical-device approval remains necessary for power use, reboot recovery and manufacturer behavior. Uploading to Play and recording/uploading the demonstration video remain owner actions.

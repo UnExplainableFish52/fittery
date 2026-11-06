@@ -63,6 +63,8 @@ Future<void> showChargingDashboard(
   }
   c.setChargingDashboardVisible(true);
   try {
+    // Warm the display-sized image without delaying navigation on decoding.
+    unawaited(precacheImage(_cosmicImage(context), context));
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         settings: const RouteSettings(name: '/charging-dashboard'),
@@ -320,7 +322,7 @@ class _ChargingDashboardPageState extends State<ChargingDashboardPage>
     ];
     const scheme = ColorScheme.dark(
       primary: _teal,
-      surface: Color(0xFF060912),
+      surface: Color(0xFF03131D),
       onSurface: Color(0xFFF1F7FF),
       onSurfaceVariant: _muted,
     );
@@ -336,179 +338,209 @@ class _ChargingDashboardPageState extends State<ChargingDashboardPage>
           child: Scaffold(
             key: const ValueKey('charging-dashboard'),
             backgroundColor: scheme.surface,
-            body: Stack(
-              fit: StackFit.expand,
-              children: [
-                const RepaintBoundary(child: _DashboardBackground()),
-                SafeArea(
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 940),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                        child: Column(
-                          children: [
-                            _DashboardHeader(onClose: _close),
-                            const SizedBox(height: 4),
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (context, box) {
-                                  final scale = MediaQuery.textScalerOf(
-                                    context,
-                                  );
-                                  final single = scale.scale(12) > 20;
-                                  // Reserve two label lines and a complete value line.
-                                  // Large accessibility fonts can scroll the body; exit
-                                  // controls remain visible and keep their touch size.
-                                  final cardHeight =
-                                      24 +
-                                      scale.scale(12) * 2.5 +
-                                      8 +
-                                      scale.scale(24) * 1.2;
-                                  final gridHeight =
-                                      (single ? 4 : 2) * cardHeight +
-                                      (single ? 30 : 10);
-                                  final clockHeight = scale.scale(20) * 1.3;
-                                  final error = _error ?? c.error;
-                                  final extraHeight = error == null
-                                      ? 0.0
-                                      : scale.scale(12) * 5 + 12;
-                                  Widget metrics() => _DashboardMetrics(
-                                    stats: stats,
-                                    single: single,
-                                    cardHeight: cardHeight,
-                                  );
-                                  Widget hero({required double ringSize}) =>
-                                      Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _batteryRing(
-                                            ringSize,
-                                            validLevel,
-                                            r?.charging == true,
-                                          ),
-                                          const SizedBox(height: 10),
-                                          const _DashboardClock(),
-                                          if (error != null)
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                top: 10,
-                                              ),
-                                              child: Text(
-                                                error,
-                                                textAlign: TextAlign.center,
-                                                style: const TextStyle(
-                                                  color: coral,
-                                                  fontSize: 12,
-                                                  height: 1.4,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
+            body: LayoutBuilder(
+              builder: (context, viewport) {
+                final textScale =
+                    MediaQuery.textScalerOf(context).scale(16) / 16;
+                if (viewport.maxHeight >= viewport.maxWidth * (2048 / 1152) &&
+                    viewport.maxWidth >= 300 &&
+                    textScale <= 1.25) {
+                  return _CosmicDashboard(
+                    viewport: Size(viewport.maxWidth, viewport.maxHeight),
+                    reading: r,
+                    level: validLevel,
+                    stats: stats,
+                    estimate: _estimate,
+                    animation: _orbit,
+                    dual: dual,
+                    version:
+                        'v${r?.data['appVersion'] ?? c.appInfo['version'] ?? '—'} · build ${r?.data['appBuild'] ?? c.appInfo['build'] ?? '—'}',
+                    error: _error ?? c.error,
+                    onClose: _close,
+                  );
+                }
+                // Landscape and accessibility fonts retain a reflowing layout.
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const RepaintBoundary(child: _DashboardBackground()),
+                    SafeArea(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 940),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                            child: Column(
+                              children: [
+                                _DashboardHeader(onClose: _close),
+                                const SizedBox(height: 4),
+                                Expanded(
+                                  child: LayoutBuilder(
+                                    builder: (context, box) {
+                                      final scale = MediaQuery.textScalerOf(
+                                        context,
                                       );
-                                  final wide =
-                                      box.maxWidth >= 620 &&
-                                      box.maxWidth > box.maxHeight * 1.25 &&
-                                      !single;
-                                  if (wide &&
-                                      box.maxHeight >=
-                                          math.max(
-                                            gridHeight,
-                                            160 +
-                                                clockHeight +
-                                                10 +
-                                                extraHeight,
-                                          )) {
-                                    return Row(
-                                      children: [
-                                        Expanded(
-                                          child: Center(
-                                            child: hero(
-                                              ringSize: math.min(
-                                                300,
-                                                math.min(
-                                                  box.maxWidth * .44,
-                                                  box.maxHeight -
-                                                      clockHeight -
-                                                      10 -
-                                                      extraHeight,
+                                      final single = scale.scale(12) > 20;
+                                      // Reserve two label lines and a complete value line.
+                                      // Large accessibility fonts can scroll the body; exit
+                                      // controls remain visible and keep their touch size.
+                                      final cardHeight =
+                                          24 +
+                                          scale.scale(12) * 2.5 +
+                                          8 +
+                                          scale.scale(24) * 1.2;
+                                      final gridHeight =
+                                          (single ? 4 : 2) * cardHeight +
+                                          (single ? 30 : 10);
+                                      final clockHeight = scale.scale(20) * 1.3;
+                                      final error = _error ?? c.error;
+                                      final extraHeight = error == null
+                                          ? 0.0
+                                          : scale.scale(12) * 5 + 12;
+                                      Widget metrics() => _DashboardMetrics(
+                                        stats: stats,
+                                        single: single,
+                                        cardHeight: cardHeight,
+                                      );
+                                      Widget hero({required double ringSize}) =>
+                                          Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              _batteryRing(
+                                                ringSize,
+                                                validLevel,
+                                                r?.charging == true,
+                                              ),
+                                              const SizedBox(height: 10),
+                                              const _DashboardClock(),
+                                              if (error != null)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        top: 10,
+                                                      ),
+                                                  child: Text(
+                                                    error,
+                                                    textAlign: TextAlign.center,
+                                                    style: const TextStyle(
+                                                      color: coral,
+                                                      fontSize: 12,
+                                                      height: 1.4,
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          );
+                                      final wide =
+                                          box.maxWidth >= 620 &&
+                                          box.maxWidth > box.maxHeight * 1.25 &&
+                                          !single;
+                                      if (wide &&
+                                          box.maxHeight >=
+                                              math.max(
+                                                gridHeight,
+                                                160 +
+                                                    clockHeight +
+                                                    10 +
+                                                    extraHeight,
+                                              )) {
+                                        return Row(
+                                          children: [
+                                            Expanded(
+                                              child: Center(
+                                                child: hero(
+                                                  ringSize: math.min(
+                                                    300,
+                                                    math.min(
+                                                      box.maxWidth * .44,
+                                                      box.maxHeight -
+                                                          clockHeight -
+                                                          10 -
+                                                          extraHeight,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 28),
-                                        Expanded(
-                                          child: Center(child: metrics()),
-                                        ),
-                                      ],
-                                    );
-                                  }
-                                  final remaining =
-                                      box.maxHeight -
-                                      gridHeight -
-                                      clockHeight -
-                                      26 -
-                                      extraHeight;
-                                  if (remaining >= 160) {
-                                    return Column(
-                                      children: [
-                                        Expanded(
-                                          child: Center(
-                                            child: hero(
-                                              ringSize: math.min(
-                                                300,
-                                                math.min(
-                                                  box.maxWidth,
-                                                  remaining,
+                                            const SizedBox(width: 28),
+                                            Expanded(
+                                              child: Center(child: metrics()),
+                                            ),
+                                          ],
+                                        );
+                                      }
+                                      final remaining =
+                                          box.maxHeight -
+                                          gridHeight -
+                                          clockHeight -
+                                          26 -
+                                          extraHeight;
+                                      if (remaining >= 160) {
+                                        return Column(
+                                          children: [
+                                            Expanded(
+                                              child: Center(
+                                                child: hero(
+                                                  ringSize: math.min(
+                                                    300,
+                                                    math.min(
+                                                      box.maxWidth,
+                                                      remaining,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
+                                            const SizedBox(height: 16),
+                                            metrics(),
+                                          ],
+                                        );
+                                      }
+                                      return SingleChildScrollView(
+                                        key: const ValueKey(
+                                          'charging-dashboard-overflow',
                                         ),
-                                        const SizedBox(height: 16),
-                                        metrics(),
-                                      ],
-                                    );
-                                  }
-                                  return SingleChildScrollView(
-                                    key: const ValueKey(
-                                      'charging-dashboard-overflow',
-                                    ),
-                                    child: Column(
-                                      children: [
-                                        hero(
-                                          ringSize: math.min(box.maxWidth, 180),
+                                        child: Column(
+                                          children: [
+                                            hero(
+                                              ringSize: math.min(
+                                                box.maxWidth,
+                                                180,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            metrics(),
+                                          ],
                                         ),
-                                        const SizedBox(height: 16),
-                                        metrics(),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                _ConnectionCaption(reading: r),
+                                const SizedBox(height: 10),
+                                _dismissSlider(context),
+                                const SizedBox(height: 7),
+                                Text(
+                                  'v${r?.data['appVersion'] ?? c.appInfo['version'] ?? '—'} · build ${r?.data['appBuild'] ?? c.appInfo['build'] ?? '—'}',
+                                  key: const ValueKey(
+                                    'charging-dashboard-version',
+                                  ),
+                                  style: const TextStyle(
+                                    color: _muted,
+                                    fontSize: 10,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 16),
-                            _ConnectionCaption(reading: r),
-                            const SizedBox(height: 10),
-                            _dismissSlider(context),
-                            const SizedBox(height: 7),
-                            Text(
-                              'v${r?.data['appVersion'] ?? c.appInfo['version'] ?? '—'} · build ${r?.data['appBuild'] ?? c.appInfo['build'] ?? '—'}',
-                              key: const ValueKey('charging-dashboard-version'),
-                              style: const TextStyle(
-                                color: _muted,
-                                fontSize: 10,
-                                height: 1.2,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -664,6 +696,645 @@ class _ChargingDashboardPageState extends State<ChargingDashboardPage>
 const _teal = Color(0xFF5CF2CE);
 const _cyan = Color(0xFF65DCFF);
 const _muted = Color(0xFFAABBCF);
+
+ImageProvider _cosmicImage(BuildContext context) => ResizeImage(
+  const AssetImage('assets/charging/cosmic_dashboard_v1.jpg'),
+  width:
+      (MediaQuery.sizeOf(context).width *
+              MediaQuery.devicePixelRatioOf(context) /
+              64)
+          .ceil()
+          .clamp(10, 18) *
+      64,
+);
+
+/// Only unoccupied strips grow on tall phones. Gauge, lettering and cards keep
+/// their source proportions, and live values use this exact same mapping.
+class _CosmicLayout {
+  const _CosmicLayout(this.height);
+  final double height;
+  static const bands = <(double, double, double)>[
+    (0, 24, .16),
+    (144, 154, .10),
+    (910, 921, .10),
+    (1020, 1050, .16),
+    (1565, 1590, .14),
+    (1765, 1790, .12),
+    (2006, 2048, .22),
+  ];
+
+  double y(double source) {
+    final extra = math.max(0.0, height - 2048);
+    var result = source;
+    for (final (start, end, weight) in bands) {
+      result += extra * weight * ((source - start) / (end - start)).clamp(0, 1);
+    }
+    return result;
+  }
+
+  Rect rect(Rect source) =>
+      Rect.fromLTRB(source.left, y(source.top), source.right, y(source.bottom));
+}
+
+class _CosmicArtwork extends StatefulWidget {
+  const _CosmicArtwork({required this.layout});
+  final _CosmicLayout layout;
+  @override
+  State<_CosmicArtwork> createState() => _CosmicArtworkState();
+}
+
+class _CosmicArtworkState extends State<_CosmicArtwork> {
+  ImageStream? _stream;
+  ImageInfo? _info;
+  late final _listener = ImageStreamListener((
+    ImageInfo info,
+    bool synchronous,
+  ) {
+    if (!mounted) {
+      info.dispose();
+      return;
+    }
+    final previous = _info;
+    if (synchronous) {
+      _info = info;
+    } else {
+      setState(() => _info = info);
+    }
+    if (previous != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+    }
+  });
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final stream = _cosmicImage(
+      context,
+    ).resolve(createLocalImageConfiguration(context));
+    if (stream.key == _stream?.key) return;
+    _stream?.removeListener(_listener);
+    _stream = stream;
+    stream.addListener(_listener);
+  }
+
+  @override
+  void dispose() {
+    _stream?.removeListener(_listener);
+    _info?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    key: const ValueKey('cosmic-dashboard-artwork'),
+    painter: _CosmicArtworkPainter(_info?.image, widget.layout),
+  );
+}
+
+class _CosmicArtworkPainter extends CustomPainter {
+  const _CosmicArtworkPainter(this.image, this.layout);
+  final ui.Image? image;
+  final _CosmicLayout layout;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final art = image;
+    if (art == null) return;
+    final paint = Paint()..filterQuality = FilterQuality.low;
+    void strip(double start, double end) {
+      if (end <= start) return;
+      canvas.drawImageRect(
+        art,
+        Rect.fromLTRB(
+          0,
+          start * art.height / 2048,
+          art.width.toDouble(),
+          end * art.height / 2048,
+        ),
+        Rect.fromLTRB(0, layout.y(start), size.width, layout.y(end)),
+        paint,
+      );
+    }
+
+    var previous = 0.0;
+    for (final (start, end, _) in _CosmicLayout.bands) {
+      strip(previous, start);
+      strip(start, end);
+      previous = end;
+    }
+    strip(previous, 2048);
+  }
+
+  @override
+  bool shouldRepaint(_CosmicArtworkPainter oldDelegate) =>
+      image != oldDelegate.image || layout.height != oldDelegate.layout.height;
+}
+
+/// Preserve the reference's proportions: the bitmap and all live overlays share
+/// one coordinate system, so phone aspect ratios never move values off cards.
+class _CosmicDashboard extends StatelessWidget {
+  const _CosmicDashboard({
+    required this.viewport,
+    required this.reading,
+    required this.level,
+    required this.stats,
+    required this.estimate,
+    required this.animation,
+    required this.dual,
+    required this.version,
+    required this.error,
+    required this.onClose,
+  });
+
+  final Size viewport;
+  final Reading? reading;
+  final int? level;
+  final List<(IconData, String, String, String)> stats;
+  final ChargingEstimate estimate;
+  final Animation<double> animation;
+  final bool dual;
+  final String version;
+  final String? error;
+  final Future<void> Function() onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final layout = _CosmicLayout(viewport.height * 1152 / viewport.width);
+    final connectedAt = _finite(reading?.number('chargeConnectedAt'));
+    final duration = _finite(reading?.number('chargeConnectedDurationMs'));
+    final confirmed = reading?.data['chargeConnectionConfirmed'] == true;
+    final since = connectedAt == null || connectedAt <= 0
+        ? '—'
+        : '${confirmed ? '' : '~'}${_clock(DateTime.fromMillisecondsSinceEpoch(connectedAt.toInt()))}';
+    final minutes = duration == null || duration < 0 ? null : duration ~/ 60000;
+    final elapsed = minutes == null
+        ? '—'
+        : minutes < 60
+        ? '$minutes min'
+        : '${minutes ~/ 60}h ${minutes % 60}m';
+    final progress = (level ?? 0) / 100;
+
+    Widget value({
+      required Rect bounds,
+      required String text,
+      required String description,
+      double fontSize = 54,
+      Color color = Colors.white,
+      Key? textKey,
+    }) => Positioned.fromRect(
+      rect: layout.rect(bounds),
+      child: Tooltip(
+        message: description,
+        child: Semantics(
+          label: '$description: $text',
+          excludeSemantics: true,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                text,
+                key: textKey,
+                maxLines: 1,
+                style: TextStyle(
+                  color: color,
+                  fontSize: fontSize,
+                  height: 1.15,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned.fill(
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: MediaQuery(
+              // Large accessibility text uses the reflowing view above.
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.noScaling),
+              child: SizedBox(
+                width: 1152,
+                height: layout.height,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        child: _CosmicArtwork(layout: layout),
+                      ),
+                    ),
+                    Positioned.fromRect(
+                      rect: layout.rect(const Rect.fromLTWH(395, 32, 362, 110)),
+                      child: Semantics(
+                        key: const ValueKey('charging-dashboard-brand'),
+                        label: 'Fittery',
+                        image: true,
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                    Positioned.fromRect(
+                      rect: layout.rect(
+                        const Rect.fromLTWH(200, 157, 752, 752),
+                      ),
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          key: const ValueKey('charging-dashboard-track'),
+                          painter: _CosmicChargeTrack(progress),
+                        ),
+                      ),
+                    ),
+                    Positioned.fromRect(
+                      rect: layout.rect(
+                        const Rect.fromLTWH(200, 157, 752, 752),
+                      ),
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          key: const ValueKey('charging-dashboard-ring'),
+                          painter: _CosmicChargeGlint(
+                            animation,
+                            reading?.charging == true,
+                            progress,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned.fromRect(
+                      rect: layout.rect(
+                        const Rect.fromLTWH(300, 470, 552, 162),
+                      ),
+                      child: Semantics(
+                        label: level == null
+                            ? 'Battery percentage unavailable'
+                            : 'Battery $level percent',
+                        value: reading?.text('status'),
+                        excludeSemantics: true,
+                        child: Center(
+                          child: Text(
+                            level == null ? '—' : '$level%',
+                            style: const TextStyle(
+                              fontSize: 142,
+                              height: 1,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: -5,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned.fromRect(
+                      rect: layout.rect(const Rect.fromLTWH(300, 648, 552, 50)),
+                      child: Center(
+                        child: Text(
+                          reading?.text('status').toUpperCase() ?? '—',
+                          style: const TextStyle(
+                            fontSize: 29,
+                            color: Color(0xFF00EAD9),
+                            letterSpacing: 5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(500, 930, 275, 74),
+                      text: _clock(DateTime.now()),
+                      description: 'Current time',
+                      fontSize: 47,
+                      textKey: const ValueKey('charging-dashboard-clock'),
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(266, 1186, 278, 73),
+                      text: stats[0].$3,
+                      description: stats[0].$4,
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(771, 1186, 280, 73),
+                      text: stats[1].$3,
+                      description: stats[1].$4,
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(771, 1254, 270, 26),
+                      text: dual ? 'Calculated · 2× voltage' : 'Calculated',
+                      description: stats[1].$4,
+                      fontSize: 22,
+                      color: _muted,
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(266, 1410, 278, 73),
+                      text: stats[3].$3,
+                      description: stats[3].$4,
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(771, 1423, 280, 69),
+                      text: stats[2].$3,
+                      description: stats[2].$4,
+                      fontSize: 51,
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(771, 1490, 270, 26),
+                      text: 'Est. to ${estimate.target}%',
+                      description: estimate.reason,
+                      fontSize: 22,
+                      color: _muted,
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(265, 1680, 290, 65),
+                      text: since,
+                      description: confirmed
+                          ? 'Charger connected at'
+                          : 'Tracking since (connection time unconfirmed)',
+                      fontSize: 46,
+                      textKey: const ValueKey('charging-dashboard-connected'),
+                    ),
+                    value(
+                      bounds: const Rect.fromLTWH(816, 1680, 264, 65),
+                      text: elapsed,
+                      description:
+                          'Time elapsed since connection tracking began',
+                      fontSize: 46,
+                      textKey: const ValueKey('charging-dashboard-elapsed'),
+                    ),
+                    Positioned.fromRect(
+                      rect: layout.rect(
+                        const Rect.fromLTWH(56, 1778, 1040, 258),
+                      ),
+                      child: _CosmicDismiss(onClose: onClose),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: layout.y(2020),
+                      child: IgnorePointer(
+                        child: Text(
+                          version,
+                          key: const ValueKey('charging-dashboard-version'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            height: 1,
+                            color: _muted,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (error != null)
+          Positioned(
+            left: 16,
+            right: 60,
+            top: MediaQuery.viewPaddingOf(context).top + 52,
+            child: ColoredBox(
+              color: const Color(0xEB03131D),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(
+                  error!,
+                  style: const TextStyle(color: coral, fontSize: 12),
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          top: MediaQuery.viewPaddingOf(context).top + 4,
+          right: 4,
+          child: IconButton(
+            tooltip: 'Close charging dashboard',
+            onPressed: onClose,
+            color: _muted,
+            icon: const Icon(Icons.close_rounded, size: 20),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CosmicDismiss extends StatefulWidget {
+  const _CosmicDismiss({required this.onClose});
+  final Future<void> Function() onClose;
+
+  @override
+  State<_CosmicDismiss> createState() => _CosmicDismissState();
+}
+
+class _CosmicDismissState extends State<_CosmicDismiss> {
+  Offset _start = Offset.zero;
+  Offset _distance = Offset.zero;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Dismiss charging dashboard',
+    hint: 'Swipe up or activate to close',
+    button: true,
+    onTap: widget.onClose,
+    child: GestureDetector(
+      key: const ValueKey('charging-dashboard-slide'),
+      behavior: HitTestBehavior.opaque,
+      // Use screen coordinates so the gesture distance stays consistent across
+      // phone sizes. Retain horizontal dismissal as an alternative.
+      onPanStart: (details) {
+        _start = details.globalPosition;
+        _distance = Offset.zero;
+      },
+      onPanUpdate: (details) => _distance = details.globalPosition - _start,
+      onPanEnd: (details) {
+        if (_distance.dy <= -56 || _distance.dx >= 150) {
+          unawaited(widget.onClose());
+        }
+        _distance = Offset.zero;
+      },
+      onPanCancel: () => _distance = Offset.zero,
+      child: const SizedBox.expand(),
+    ),
+  );
+}
+
+/// The dim segments belong to the supplied artwork. Only measured charge is
+/// illuminated here; neither the wallpaper nor the value layout animates.
+class _CosmicChargeTrack extends CustomPainter {
+  const _CosmicChargeTrack(this.progress);
+  final double progress;
+
+  // The supplied image has 57 slightly irregular segments. These measured
+  // angles, inner/outer radii and widths follow that artwork instead of drawing
+  // a second, misaligned ring over it. Coordinates use the 1152 × 2048 board.
+  static const _segments = <(double, double, double, double)>[
+    (-.2, 292, 341, 27.8),
+    (6.2, 292, 340, 29),
+    (12.7, 292, 340, 26.7),
+    (19.15, 291, 339, 28.4),
+    (25.65, 290, 339, 28.4),
+    (32.1, 290, 338, 27.8),
+    (38.6, 289, 337, 27.8),
+    (44.95, 289, 338, 27.3),
+    (51.4, 288, 337, 27.8),
+    (57.85, 289, 336, 28.4),
+    (64.3, 288, 337, 27.8),
+    (70.75, 288, 337, 28.4),
+    (77.3, 288, 337, 27.8),
+    (83.55, 289, 338, 27.3),
+    (90, 290, 338, 26.7),
+    (96.2, 290, 339, 26.7),
+    (102.7, 289, 338, 26.7),
+    (108.95, 290, 337, 26.2),
+    (115.3, 289, 338, 26.7),
+    (121.6, 289, 336, 26.7),
+    (127.95, 288, 336, 27.3),
+    (134.4, 289, 336, 26.7),
+    (140.6, 288, 337, 26.7),
+    (146.9, 289, 337, 26.7),
+    (153.15, 290, 337, 27.3),
+    (159.35, 290, 337, 27.3),
+    (165.4, 290, 337, 26.7),
+    (171.4, 290, 338, 25.6),
+    (177.25, 291, 339, 25.1),
+    (183.15, 291, 339, 25.1),
+    (189.2, 292, 339, 25.6),
+    (195.1, 292, 339, 26.7),
+    (201.4, 292, 340, 25.6),
+    (207.45, 293, 340, 27.3),
+    (213.75, 293, 341, 27.3),
+    (219.9, 293, 342, 26.7),
+    (226.15, 294, 343, 27.3),
+    (232.35, 295, 343, 27.3),
+    (238.7, 295, 343, 26.7),
+    (245, 296, 344, 26.7),
+    (251.4, 297, 346, 26.7),
+    (257.65, 297, 346, 27.3),
+    (263.95, 298, 347, 27.3),
+    (270.2, 298, 347, 26.7),
+    (276.55, 298, 346, 27.3),
+    (282.95, 297, 346, 27.3),
+    (289.35, 297, 346, 27.3),
+    (295.7, 296, 345, 27.8),
+    (302.1, 295, 343, 27.8),
+    (308.55, 294, 343, 27.3),
+    (314.95, 295, 342, 27.3),
+    (321.45, 294, 342, 27.3),
+    (327.8, 294, 342, 27.8),
+    (334.1, 293, 341, 27.8),
+    (340.45, 293, 341, 27.3),
+    (346.95, 292, 341, 28.4),
+    (353.3, 292, 340, 27.8),
+  ];
+
+  static void segment(Canvas canvas, Size size, int index, Paint paint) {
+    final (angle, inner, outer, width) = _segments[index];
+    canvas.save();
+    canvas.translate(size.width / 2, size.height / 2);
+    canvas.rotate(angle * math.pi / 180);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(-width / 2, -outer, width, outer - inner),
+        const Radius.circular(7),
+      ),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final filled = (progress * _segments.length).floor();
+    final light = Paint()..color = const Color(0xFF00EBD5);
+    final glow = Paint()
+      ..color = const Color(0x6600EBD5)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+    for (var i = 0; i < filled; i++) {
+      segment(canvas, size, i, glow);
+      segment(canvas, size, i, light);
+    }
+    if (progress <= 0) return;
+    canvas.drawArc(
+      Rect.fromCircle(center: size.center(Offset.zero), radius: 366),
+      -math.pi / 2,
+      math.pi * 2 * progress,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.2
+        ..color = const Color(0xB300EBD5),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CosmicChargeTrack oldDelegate) =>
+      progress != oldDelegate.progress;
+}
+
+class _CosmicChargeGlint extends CustomPainter {
+  _CosmicChargeGlint(this.animation, this.charging, this.progress)
+    : _clip = _filledSegments(progress),
+      super(repaint: animation);
+  final Animation<double> animation;
+  final bool charging;
+  final double progress;
+  final Path _clip;
+
+  static Path _filledSegments(double progress) {
+    final path = Path();
+    final count = (progress * _CosmicChargeTrack._segments.length).floor();
+    for (var i = 0; i < count; i++) {
+      final (angle, inner, outer, width) = _CosmicChargeTrack._segments[i];
+      final segment = Path()
+        ..addRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(-width / 2, -outer, width, outer - inner),
+            const Radius.circular(7),
+          ),
+        );
+      path.addPath(
+        segment.transform(
+          (Matrix4.identity()..rotateZ(angle * math.pi / 180)).storage,
+        ),
+        Offset.zero,
+      );
+    }
+    return path;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final filled = (progress * _CosmicChargeTrack._segments.length).floor();
+    if (!charging || filled == 0) return;
+    final angle = animation.value * math.pi * 2 * progress;
+    final center = Offset(math.sin(angle) * 319, -math.cos(angle) * 319);
+    final glow = Rect.fromCircle(center: center, radius: 26);
+    canvas.save();
+    canvas.translate(size.width / 2, size.height / 2);
+    canvas.clipPath(_clip);
+    canvas.drawCircle(
+      center,
+      26,
+      Paint()
+        ..shader = const RadialGradient(
+          colors: [Color(0xE6DEFFF8), Color(0x6600EBD5), Color(0x0000EBD5)],
+        ).createShader(glow),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_CosmicChargeGlint oldDelegate) =>
+      animation != oldDelegate.animation ||
+      charging != oldDelegate.charging ||
+      progress != oldDelegate.progress;
+}
 
 String _clock(DateTime time) =>
     '${time.hour % 12 == 0 ? 12 : time.hour % 12}:${time.minute.toString().padLeft(2, '0')} ${time.hour < 12 ? 'AM' : 'PM'}';

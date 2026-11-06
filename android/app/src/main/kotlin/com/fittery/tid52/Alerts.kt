@@ -33,6 +33,8 @@ class Alerts private constructor(private val context: Context) {
     private var alarmTone: Ringtone? = null
     private var alarmToneKey: String? = null
     private var activeAlarmMask = 0
+    val temperatureActive: Boolean get() = activeAlarmMask and 4 != 0
+    private fun silenceLabel(settings: Map<*, *>, heat: Boolean = temperatureActive) = if (heat) "Snooze for ${settings["heatReminderMinutes"] ?: 5} minutes" else "Silence"
     val alarmActive: Boolean get() = activeAlarmMask != 0
     private var alarmReceiverRegistered = false
     private val legacyAlarmLoop = object : Runnable {
@@ -84,6 +86,10 @@ class Alerts private constructor(private val context: Context) {
             manager.createNotificationChannel(NotificationChannel(SESSION_CHANNEL, "Charging sessions", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "Monitor reminders and completed charging reports"
             })
+            manager.createNotificationChannel(NotificationChannel("background_alert_status", "Background alert status", NotificationManager.IMPORTANCE_LOW).apply {
+                setShowBadge(false)
+                setSound(null, null)
+            })
             manager.createNotificationChannel(NotificationChannel(MONITOR_CHANNEL, "Battery monitoring", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Live battery readings while background monitoring is enabled"
                 setShowBadge(false)
@@ -130,6 +136,14 @@ class Alerts private constructor(private val context: Context) {
         catch (e: SecurityException) { android.util.Log.w("Fittery", "Charging session notification unavailable", e) }
     }
 
+    fun backgroundStatus(): Notification {
+        val stop = PendingIntent.getService(context, 2, Intent(context, MonitorService::class.java).setAction("STOP_ALERTS"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return builder("background_alert_status").setContentTitle("Background Alerts active")
+            .setContentText("Watching battery level and temperature. Recording is off.")
+            .setOnlyAlertOnce(true).setShowWhen(false).setOngoing(true)
+            .addAction(Notification.Action.Builder(null, "Stop background alerts", stop).build()).build()
+    }
+
     fun persistent(r: Map<String, Any?>): Notification {
         val s = r["settings"] as? Map<*,*> ?: emptyMap<Any,Any>()
         val dual = if (s["dualCell"] == true) 2 else 1
@@ -153,7 +167,7 @@ class Alerts private constructor(private val context: Context) {
             .setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
         if (r["alarmActive"] == true) {
             notification.setSubText("Battery alarm active")
-                .addAction(Notification.Action.Builder(null, "Silence", silenceIntent()).build())
+                .addAction(Notification.Action.Builder(null, silenceLabel(s), silenceIntent()).build())
         }
         return notification.addAction(Notification.Action.Builder(null, "Stop monitoring", stop).build()).build()
     }
@@ -171,9 +185,10 @@ class Alerts private constructor(private val context: Context) {
             .setPriority(Notification.PRIORITY_HIGH).setCategory(Notification.CATEGORY_ALARM)
             .setVisibility(if (settings["lockScreen"] != false) Notification.VISIBILITY_PUBLIC else Notification.VISIBILITY_SECRET)
             .setAutoCancel(false).setOngoing(true).setOnlyAlertOnce(true).setDeleteIntent(dismiss)
-            .addAction(Notification.Action.Builder(null,"Silence",dismiss).build()).build()
+            .addAction(Notification.Action.Builder(null,silenceLabel(settings, id == 13 || temperatureActive),dismiss).build()).build()
         manager.notify(id,n)
         activeAlarmMask = activeAlarmMask or when (id) { 11 -> 1; 12 -> 2; 13 -> 4; else -> 0 }
+        persistActiveAlarms()
         if (!alarmReceiverRegistered) {
             val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED).apply {
                 addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED)
@@ -193,13 +208,17 @@ class Alerts private constructor(private val context: Context) {
         for ((bit, id) in listOf(1 to 11, 2 to 12, 4 to 13)) {
             if (previous and bit != 0 && activeAlarmMask and bit == 0) manager.cancel(id)
         }
+        persistActiveAlarms()
         syncAlarmSound(settings)
         if (activeAlarmMask == 0) releaseAlarmReceiver()
     }
 
+    private fun persistActiveAlarms() { context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putInt("activeAlarmMask", activeAlarmMask).apply() }
+
     fun silence() {
         for (id in listOf(11, 12, 13)) manager.cancel(id)
         activeAlarmMask = 0
+        persistActiveAlarms()
         stopAlarmSound()
         releaseAlarmReceiver()
     }

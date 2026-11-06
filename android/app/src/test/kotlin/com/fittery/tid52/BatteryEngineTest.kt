@@ -139,8 +139,8 @@ class BatteryEngineTest {
         assertEquals(false, engine.settings()["chargingScreenSaver"])
     }
 
-    @Test fun chargingDashboardIsOptInAndPersistsWithoutEnablingMonitoring() {
-        assertEquals(false, engine.settings()["chargingDashboard"])
+    @Test fun chargingDashboardDefaultsOnAndPersistsWithoutEnablingMonitoring() {
+        assertEquals(true, engine.settings()["chargingDashboard"])
         engine.updateSetting("chargingDashboard", true)
         assertEquals(true, engine.settings()["chargingDashboard"])
         assertFalse(engine.monitoring)

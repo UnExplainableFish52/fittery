@@ -87,6 +87,7 @@ class ChargingDreamService : DreamService() {
             val view = FlutterView(this, FlutterSurfaceView(this))
             flutterView = view
             setContentView(view)
+            hideChargingDashboardBars(window)
             view.attachToFlutterEngine(renderingEngine)
             renderingEngine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint(
                 FlutterInjector.instance().flutterLoader().findAppBundlePath(), "chargingDreamMain"
@@ -108,6 +109,7 @@ class ChargingDreamService : DreamService() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideChargingDashboardBars(window)
         if (hasFocus) engine?.lifecycleChannel?.aWindowIsFocused()
         else engine?.lifecycleChannel?.noWindowsAreFocused()
     }

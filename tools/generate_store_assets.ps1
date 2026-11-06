@@ -1,5 +1,7 @@
 # Generate store-specific encodings and a vector-based feature graphic.
 # This leaves the Android launcher assets and original brand images untouched.
+param([switch] $IconOnly)
+
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -18,7 +20,7 @@ function Rounded-Rectangle([float] $X, [float] $Y, [float] $Width, [float] $Heig
     return $path
 }
 
-$source = [System.Drawing.Bitmap]::new((Join-Path $projectRoot 'fittery_app_drawer_512.png'))
+$source = [System.Drawing.Bitmap]::new((Join-Path $projectRoot 'FitteryLogo_512x512.png'))
 $icon = [System.Drawing.Bitmap]::new(512, 512, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
 $iconGraphics = [System.Drawing.Graphics]::FromImage($icon)
 try {
@@ -28,6 +30,11 @@ try {
     $icon.Save((Join-Path $storeRoot 'app-icon-512.png'), [System.Drawing.Imaging.ImageFormat]::Png)
 } finally {
     $iconGraphics.Dispose(); $icon.Dispose(); $source.Dispose()
+}
+
+if ($IconOnly) {
+    Write-Output 'Generated 32-bit store icon.'
+    return
 }
 
 $svg = @'

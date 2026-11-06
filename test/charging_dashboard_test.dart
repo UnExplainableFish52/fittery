@@ -489,7 +489,7 @@ void main() {
     tester,
   ) async {
     final c = controller()..settings['chargingDashboard'] = false;
-    expect(defaults['chargingDashboard'], isFalse);
+    expect(defaults['chargingDashboard'], isTrue);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -533,9 +533,9 @@ void main() {
       final slider = tester.getRect(
         find.byKey(const ValueKey('charging-dashboard-slide')),
       );
-      expect(slider.bottom, lessThanOrEqualTo(873 - 24));
+      expect(slider.bottom, lessThanOrEqualTo(873));
       for (final value in ['-525 mA', '-2.21 W', '—', '30.0 °C']) {
-        final valueRect = tester.getRect(find.text(value));
+        final valueRect = tester.getRect(find.text(value).first);
         expect(valueRect.top, greaterThan(32));
         expect(valueRect.bottom, lessThan(slider.top));
       }
@@ -553,9 +553,14 @@ void main() {
       );
       expect(brand.dx, closeTo(393 / 2, .5));
       expect(
-        find.byKey(const ValueKey('charging-dashboard-core-art')),
+        find.byKey(const ValueKey('cosmic-dashboard-artwork')),
         findsOneWidget,
       );
+      final artwork = tester.getRect(
+        find.byKey(const ValueKey('cosmic-dashboard-artwork')),
+      );
+      expect(artwork, const Rect.fromLTWH(0, 0, 393, 873));
+      expect(ring.width, closeTo(ring.height, .01));
       final clockText = tester
           .widget<Text>(find.byKey(const ValueKey('charging-dashboard-clock')))
           .data!;
@@ -566,6 +571,56 @@ void main() {
       expect(find.text('Battery temperature'), findsNothing);
       expect(find.text('Your device lock stays in place'), findsNothing);
       expect(find.byIcon(Icons.battery_charging_full_rounded), findsNothing);
+      expect(tester.takeException(), isNull);
+      await clean(tester, c);
+    },
+  );
+
+  testWidgets(
+    'Cosmic portrait uses live charge and an intentional upward swipe',
+    (tester) async {
+      tester.view.physicalSize = const Size(393, 873);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final c = controller();
+      await tester.pumpWidget(harness(c, reducedMotion: true));
+      await open(tester);
+      for (final level in [0, 25, 72, 100]) {
+        c.reading = Reading({
+          ...c.reading!.data,
+          'level': level,
+          'status': level == 100 ? 'Full' : 'Charging',
+        });
+        c.notifyListeners();
+        await tester.pump();
+        final track =
+            tester
+                    .widget<CustomPaint>(
+                      find.byKey(const ValueKey('charging-dashboard-track')),
+                    )
+                    .painter
+                as dynamic;
+        final glint =
+            tester
+                    .widget<CustomPaint>(
+                      find.byKey(const ValueKey('charging-dashboard-ring')),
+                    )
+                    .painter
+                as dynamic;
+        expect(track.progress, level / 100);
+        expect(glint.progress, level / 100);
+        expect(glint.charging, level != 100);
+        expect(find.text('$level%'), findsOneWidget);
+      }
+      final dismiss = find.byKey(const ValueKey('charging-dashboard-slide'));
+      await tester.drag(dismiss, const Offset(0, -20));
+      await tester.pump();
+      expect(c.chargingDashboardVisible, isTrue);
+      await tester.drag(dismiss, const Offset(0, -100));
+      await tester.pumpAndSettle();
+      expect(c.chargingDashboardVisible, isFalse);
+      expect(calls.where((call) => call.method == 'monitoring'), isEmpty);
       expect(tester.takeException(), isNull);
       await clean(tester, c);
     },

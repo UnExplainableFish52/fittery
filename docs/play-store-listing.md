@@ -1,3 +1,12 @@
+## What’s new in 1.2.0 (27)
+
+- A refreshed Settings header and introduction make Fittery easier to explore.
+- Independent Background Alerts watches battery level and temperature without recording statistics.
+- Monitor Mode retains recording, graphs, and its existing alarms.
+- Full-width dialog actions improve readability.
+- The Charging Dashboard starts enabled for new users; existing preferences are preserved.
+- Updated FAQ explains setup, alerts, lock-screen behavior, and Android limitations.
+
 # Fittery store listing draft
 
 ## App name
@@ -45,7 +54,7 @@ Initial Google Play test release of Fittery, with live battery readings, interac
 
 ## Assets
 
-- App icon: `store-assets/app-icon-512.png`, a 512 × 512, 32-bit RGBA copy of the original brand icon. Decoded pixels match the original.
+- App icon: `store-assets/app-icon-512.png`, a 512 × 512, 32-bit RGBA copy of `FitteryLogo_512x512.png`. Decoded pixels match the supplied artwork.
 - Feature graphic: `store-assets/feature-graphic-1024x500.png`, an opaque 24-bit PNG. Editable source is `store-assets/feature-graphic.svg`. Prepared and visually checked; owner review pending.
 - Actual phone screenshots: Dashboard, Current graph, History with observed records, Settings/alerts. Use consistent theme and readable data; avoid example records or unsupported battery-health claims.
 - Foreground-service video: follow the demonstration in `play-store-release.md`.

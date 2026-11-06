@@ -32,6 +32,19 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger,"fittery/battery").setMethodCallHandler { call, result ->
             try {
                 when (call.method) {
+                    "acknowledgeRelease" -> { battery.acknowledgeRelease(call.arguments as String); result.success(null) }
+                    "backgroundAlerts" -> {
+                        if (call.arguments == true) withNotifications(result) {
+                            val previous = MonitorPreference.alertsEnabled(this)
+                            MonitorPreference.setAlerts(this, true)
+                            try { MonitorPreference.start(this) } catch (e: RuntimeException) { MonitorPreference.setAlerts(this, previous); throw e }
+                        } else {
+                            MonitorPreference.setAlerts(this, false)
+                            battery.setBackgroundAlerts(false)
+                            if (MonitorPreference.requested(this)) MonitorPreference.start(this) else stopService(Intent(this, MonitorService::class.java))
+                            result.success(null)
+                        }
+                    }
                     "initial" -> result.success(battery.snapshot())
                     "screenSaverSettings" -> {
                         open(Intent(Settings.ACTION_DREAM_SETTINGS), Intent(Settings.ACTION_DISPLAY_SETTINGS))
@@ -92,8 +105,9 @@ class MainActivity : FlutterActivity() {
                         if (call.arguments == true) {
                             withNotifications(result) { startMonitor() }
                         } else {
+                            MonitorPreference.set(this, false)
                             battery.stopMonitoring()
-                            stopService(Intent(this,MonitorService::class.java))
+                            if (MonitorPreference.requested(this)) MonitorPreference.start(this) else stopService(Intent(this,MonitorService::class.java))
                             result.success(null)
                         }
                     }
@@ -230,19 +244,31 @@ class MainActivity : FlutterActivity() {
         } else { action(); result.success(null) }
     }
     private fun startMonitor() {
-        val intent = Intent(this,MonitorService::class.java)
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-        // Reflect the request immediately; onCreate confirms it with a live update.
-        battery.setMonitoring(true)
+        val previous = MonitorPreference.enabled(this)
+        MonitorPreference.set(this, true)
+        try { MonitorPreference.start(this) }
+        catch (e: RuntimeException) { MonitorPreference.set(this, previous); throw e }
     }
+
     private fun open(intent: Intent, fallback: Intent? = null) {
         try { startActivity(intent) } catch (e: android.content.ActivityNotFoundException) {
             startActivity(fallback ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))
         }
     }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        chargingDashboardWindow.onWindowFocusChanged(hasFocus)
+    }
+
     override fun onResume() {
         super.onResume()
-        if (::battery.isInitialized) battery.setForeground(true)
+        if (::battery.isInitialized) {
+            battery.setForeground(true)
+            if (MonitorPreference.requested(this) && (!battery.monitoring && MonitorPreference.enabled(this) || !battery.backgroundAlertsRunning && MonitorPreference.alertsEnabled(this))) {
+                try { MonitorPreference.start(this) }
+                catch (e: RuntimeException) { android.util.Log.w("Fittery", "Monitoring could not resume", e) }
+            }
+        }
         if (::network.isInitialized) network.setForeground(true)
     }
     override fun onPause() {

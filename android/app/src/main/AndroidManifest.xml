@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
         android:label="Fittery"
         android:allowBackup="false"
@@ -35,7 +36,7 @@
         </activity>
         <service android:name=".MonitorService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-enabled real-time battery telemetry recording and battery threshold alerts while the app is closed" />
+                android:value="User-enabled live battery recording and independent broadcast-driven battery level and temperature alerts while the app is closed" />
         </service>
         <service android:name=".ChargingDreamService" android:label="Fittery charging dashboard"
             android:enabled="false" android:exported="true" android:permission="android.permission.BIND_DREAM_SERVICE">
@@ -45,6 +46,12 @@
             </intent-filter>
             <meta-data android:name="android.service.dream" android:resource="@xml/charging_dream" />
         </service>
+        <receiver android:name=".MonitorRestoreReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <receiver android:name=".AlarmDismissReceiver" android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

@@ -39,6 +39,23 @@ class BatteryController extends ChangeNotifier {
   bool get appActive => _appActive;
   bool _chargingDashboardVisible = false;
   bool get chargingDashboardVisible => _chargingDashboardVisible;
+  bool monitoringEnabled = false;
+  bool backgroundAlertsEnabled = false, backgroundAlertsRunning = false;
+  bool settingsIntroAcknowledged = false, backgroundAlertsOffered = false;
+  Future<void> acknowledgeRelease(String key) async {
+    await channel.invokeMethod<void>('acknowledgeRelease', key);
+    if (key == 'settingsIntroAcknowledged') settingsIntroAcknowledged = true;
+    if (key == 'backgroundAlertsOffered') backgroundAlertsOffered = true;
+    notifyListeners();
+  }
+
+  Future<void> setBackgroundAlerts(bool value) async {
+    await channel.invokeMethod<void>('backgroundAlerts', value);
+    final data = await channel.invokeMapMethod<String, dynamic>('initial');
+    if (data != null) _accept(data);
+    notifyListeners();
+  }
+
   bool monitoring = false, optimized = false, notificationsAllowed = false;
   bool ready = false;
   bool onboardingCompleted = false, showOnboardingOnLaunch = true;
@@ -400,7 +417,15 @@ class BatteryController extends ChangeNotifier {
     if (data['onboarding'] is Map) {
       _acceptOnboarding(Map<String, dynamic>.from(data['onboarding'] as Map));
     }
+    backgroundAlertsEnabled = data['backgroundAlertsEnabled'] == true;
+    backgroundAlertsRunning = data['backgroundAlertsRunning'] == true;
+    final release = data['releasePreferences'];
+    if (release is Map) {
+      settingsIntroAcknowledged = release['settingsIntroAcknowledged'] == true;
+      backgroundAlertsOffered = release['backgroundAlertsOffered'] == true;
+    }
     monitoring = data['monitoring'] == true;
+    monitoringEnabled = data['monitoringEnabled'] == true;
     optimized = data['optimized'] == true;
     notificationsAllowed = data['notificationsAllowed'] == true;
     sessionPrompt = data['sessionPrompt'] is Map

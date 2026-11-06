@@ -46,6 +46,7 @@ class MonitorServiceTest {
             putExtra(BatteryManager.EXTRA_PLUGGED, 0); putExtra(BatteryManager.EXTRA_VOLTAGE, 4000)
         })
         engine = BatteryEngine.get(context)
+        MonitorPreference.set(context, true)
         service = Robolectric.buildService(MonitorService::class.java).create()
     }
     @After fun cleanup() {
@@ -81,8 +82,8 @@ class MonitorServiceTest {
         val heat = AlarmRingtoneManagerShadow.players.last()
         assertTrue(heat.isPlaying)
         assertTrue(heat.isLooping)
-        val silence = notification(1)!!.actions.first { it.title == "Silence" }
-        assertTrue(notification(13)!!.actions.any { it.title == "Silence" })
+        val silence = notification(1)!!.actions.first { it.title.toString().startsWith("Snooze for") }
+        assertTrue(notification(13)!!.actions.any { it.title.toString().startsWith("Snooze for") })
         silence.actionIntent.send()
         shadowOf(Looper.getMainLooper()).idle()
         assertFalse(heat.isPlaying)
@@ -101,7 +102,7 @@ class MonitorServiceTest {
         temperature(380, 8)
         assertNotNull(notification(13))
         assertTrue(AlarmRingtoneManagerShadow.players.last().isPlaying)
-        assertTrue(notification(1)!!.actions.any { it.title == "Silence" })
+        assertTrue(notification(1)!!.actions.any { it.title.toString().startsWith("Snooze for") })
     }
 
     @Test fun temperatureNotificationCanSilenceACustomLimitWhileCharging() {
@@ -109,7 +110,7 @@ class MonitorServiceTest {
         temperature(400, 1, plugged = true)
         val heat = AlarmRingtoneManagerShadow.players.last()
         assertTrue(heat.isPlaying)
-        notification(13)!!.actions.single { it.title == "Silence" }.actionIntent.send()
+        notification(13)!!.actions.single { it.title.toString().startsWith("Snooze for") }.actionIntent.send()
         shadowOf(Looper.getMainLooper()).idle()
         assertFalse(heat.isPlaying)
         assertNull(notification(13))
@@ -153,4 +154,49 @@ class MonitorServiceTest {
             catch (_: IllegalArgumentException) { }
         }
     }
+    @Test fun heatSnoozeExpiresAndCanBeRepeated() {
+        engine.updateSetting("heatReminderMinutes", 1)
+        temperature(400, 1)
+        notification(13)!!.actions.single().actionIntent.send()
+        shadowOf(Looper.getMainLooper()).idleFor(59, TimeUnit.SECONDS)
+        assertNull(notification(13))
+        shadowOf(Looper.getMainLooper()).idleFor(4, TimeUnit.SECONDS)
+        assertNotNull(notification(13))
+        assertTrue("repeated heat notification must own an active alarm", Alerts.get(context).temperatureActive)
+        notification(13)!!.actions.single().actionIntent.send()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull(notification(13))
+        shadowOf(Looper.getMainLooper()).idleFor(63, TimeUnit.SECONDS)
+        assertNotNull(notification(13))
+    }
+    @Test fun stopClearsConsentAndDoesNotRestore() {
+        service.get().onStartCommand(Intent(context, MonitorService::class.java).setAction("STOP"), 0, 1)
+        assertFalse(MonitorPreference.enabled(context))
+        assertFalse(engine.monitoring)
+        val shadow = shadowOf(context as Application)
+        while (shadow.nextStartedService != null) { }
+        MonitorRestoreReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        assertNull(shadow.nextStartedService)
+    }
+    @Test fun bootAndUpdateRestoreOnlyWithConsent() {
+        val shadow = shadowOf(context as Application)
+        MonitorRestoreReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        assertEquals(MonitorService::class.java.name, shadow.nextStartedService.component!!.className)
+        MonitorRestoreReceiver().onReceive(context, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
+        assertNotNull(shadow.nextStartedService)
+        MonitorRestoreReceiver().onReceive(context, Intent("untrusted.action"))
+        assertNull(shadow.nextStartedService)
+    }
+    @Test fun validationRejectsBadTypesAndBulkWritesAtomically() {
+        for (value in listOf<Any>(0, 31, 1.5, true, "1", "<script>")) {
+            try { engine.updateSetting("heatReminderMinutes", value); fail("Accepted $value") }
+            catch (_: IllegalArgumentException) { }
+        }
+        for (value in listOf(1, 5, 30)) { engine.updateSetting("heatReminderMinutes", value); assertEquals(value, engine.settings()["heatReminderMinutes"]) }
+        val before = engine.settings()
+        try { engine.saveSettings(before + mapOf("heatLimit" to 40, "unknown" to "payload")); fail("Accepted unknown key") }
+        catch (_: IllegalArgumentException) { }
+        assertEquals(before, engine.settings())
+    }
+
 }

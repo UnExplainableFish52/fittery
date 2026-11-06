@@ -56,6 +56,18 @@ void main() {
     c.dispose();
   }
 
+  Future<void> finishWithoutMonitoring(WidgetTester tester) async {
+    await tester.tap(next);
+    // Saving animates behind the monitoring consent dialog. Respond before
+    // waiting for animations to settle, including on a failed-save retry.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    if (find.text('Not now').evaluate().isNotEmpty) {
+      await tester.tap(find.text('Not now'));
+    }
+    await tester.pumpAndSettle();
+  }
+
   testWidgets(
     'Fresh launch shows welcome without flashing home; skip does not complete it',
     (tester) async {
@@ -78,8 +90,7 @@ void main() {
       );
       expect(completed, isFalse);
       expect(calls.where((c) => c.method == 'completeOnboarding'), isEmpty);
-      await tester.tap(next);
-      await tester.pumpAndSettle();
+      await finishWithoutMonitoring(tester);
       expect(completed, isTrue);
       expect(showOnLaunch, isFalse);
       expect(find.byType(NavigationBar), findsOneWidget);
@@ -109,8 +120,7 @@ void main() {
       await tester.tap(skip);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('onboarding-dont-show')));
-      await tester.tap(next);
-      await tester.pumpAndSettle();
+      await finishWithoutMonitoring(tester);
       expect(completed, isTrue);
       expect(showOnLaunch, isTrue);
       await close(tester, c);
@@ -141,6 +151,10 @@ void main() {
       expect(find.text('Tell me more'), findsOneWidget);
       await tester.tap(next);
       await tester.pumpAndSettle();
+      if (find.text('Not now').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Not now'));
+        await tester.pumpAndSettle();
+      }
       expect(find.text('Powerful features. Zero clutter.'), findsOneWidget);
       expect(find.text('Continue in 3s'), findsOneWidget);
       await tester.binding.handlePopRoute();
@@ -148,6 +162,10 @@ void main() {
       expect(find.text('Tell me more'), findsOneWidget);
       await tester.tap(next);
       await tester.pumpAndSettle();
+      if (find.text('Not now').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Not now'));
+        await tester.pumpAndSettle();
+      }
       expect(find.text("Okay, that's awesome!"), findsOneWidget);
       await close(tester, c);
     },
@@ -189,6 +207,8 @@ void main() {
       final c = BatteryController()
         ..ready = true
         ..onboardingCompleted = true
+        ..settingsIntroAcknowledged = true
+        ..backgroundAlertsOffered = true
         ..showOnboardingOnLaunch = false;
       await tester.pumpWidget(FitteryApp(controller: c));
       await tester.tap(find.text('Settings'));
@@ -214,6 +234,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('onboarding-dont-show')));
       await tester.tap(next);
       await tester.pumpAndSettle();
+      if (find.text('Not now').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Not now'));
+        await tester.pumpAndSettle();
+      }
       expect(c.showOnboardingOnLaunch, isTrue);
       expect(find.byType(OnboardingPage), findsNothing);
       expect(find.text('Settings'), findsWidgets);
@@ -230,8 +254,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(skip);
     await tester.pumpAndSettle();
-    await tester.tap(next);
-    await tester.pumpAndSettle();
+    await finishWithoutMonitoring(tester);
     expect(
       find.text(
         'Your welcome preference could not be saved. Please try again.',
@@ -241,8 +264,7 @@ void main() {
     expect(c.onboardingCompleted, isFalse);
     expect(find.byType(NavigationBar), findsNothing);
     failSave = false;
-    await tester.tap(next);
-    await tester.pumpAndSettle();
+    await finishWithoutMonitoring(tester);
     expect(find.byType(NavigationBar), findsOneWidget);
     await close(tester, c);
   });
@@ -267,6 +289,10 @@ void main() {
       expect(tester.widget<FilledButton>(next).onPressed, isNotNull);
       await tester.tap(next);
       await tester.pumpAndSettle();
+      if (find.text('Not now').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Not now'));
+        await tester.pumpAndSettle();
+      }
       expect(find.text("Okay, that's awesome!"), findsOneWidget);
       expect(tester.takeException(), isNull);
       await close(tester, c);

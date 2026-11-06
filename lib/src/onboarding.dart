@@ -1,3 +1,4 @@
+import 'decision_dialog.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -143,6 +144,30 @@ class _OnboardingPageState extends State<OnboardingPage>
       _error = null;
     });
     try {
+      if (!widget.replay &&
+          !widget.c.onboardingCompleted &&
+          !widget.c.monitoringEnabled) {
+        final enable = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => DecisionDialog(
+            title: const Text('Enable background monitoring?'),
+            content: const Text(
+              'Record battery history and run enabled alerts while Fittery is closed. Monitoring shows an ongoing notification and resumes after restarting your phone. You can turn it off in Settings. Android battery restrictions may delay updates.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Not now'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Enable background monitoring'),
+              ),
+            ],
+          ),
+        );
+        if (enable == true) await widget.c.setMonitoring(true);
+      }
       await widget.c.completeOnboarding(dontShowAgain: _dontShow.value);
       if (mounted) widget.onFinished();
     } catch (e) {
@@ -240,7 +265,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(7),
                                   child: Image.asset(
-                                    'fittery_app_drawer_512.png',
+                                    'store-assets/app-icon-512.png',
                                     width: 25,
                                     height: 25,
                                     excludeFromSemantics: true,

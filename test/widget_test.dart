@@ -63,6 +63,8 @@ void main() {
             controller: controller
               ..ready = true
               ..onboardingCompleted = true
+              ..settingsIntroAcknowledged = true
+              ..backgroundAlertsOffered = true
               ..showOnboardingOnLaunch = false,
           ),
         );
@@ -88,7 +90,7 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('Settings'));
         await tester.pumpAndSettle();
-        expect(find.text('Alert sounds'), findsOneWidget);
+        expect(find.text('Know Your Battery'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
         controller.dispose();
@@ -111,6 +113,8 @@ void main() {
         controller: controller
           ..ready = true
           ..onboardingCompleted = true
+          ..settingsIntroAcknowledged = true
+          ..backgroundAlertsOffered = true
           ..showOnboardingOnLaunch = false,
       ),
     );

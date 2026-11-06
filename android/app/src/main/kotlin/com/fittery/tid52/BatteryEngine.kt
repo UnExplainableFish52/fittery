@@ -30,6 +30,7 @@ class BatteryEngine internal constructor(private val context: Context) {
     private val manager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
     private val store by lazy { BatteryStore(context) }
     private val monitorStore by lazy { MonitorStore(context) }
+    private val release = ReleasePreferences(context)
     private val onboarding by lazy { OnboardingPreferences(context) }
     private var intent: Intent? = null
     private var snapshotSource = "unavailable"
@@ -40,6 +41,10 @@ class BatteryEngine internal constructor(private val context: Context) {
     private var foreground = false
     private var dreaming = false
     internal var dreamListener: ((Map<String, Any?>) -> Unit)? = null
+    var backgroundAlertsRunning = false
+        private set
+    fun setBackgroundAlerts(value: Boolean) { if (backgroundAlertsRunning == value) return; backgroundAlertsRunning = value; reconcile() }
+    fun acknowledgeRelease(key: String) { release.acknowledge(key) }
     var monitoring = false
         private set
     var listener: ((Map<String, Any?>) -> Unit)? = null
@@ -57,7 +62,7 @@ class BatteryEngine internal constructor(private val context: Context) {
     private var lastState = ""
     private var lastMonitorRecord = Long.MIN_VALUE
     private var lastMonitorState = ""
-    private var alertMask = prefs.getInt("alertMask", 0)
+    private var alertMask = prefs.getInt("alertMask", 0) and prefs.getInt("activeAlarmMask", 0).inv()
     private var latest = mapOf<String, Any?>()
     private val chargeTimeEstimator = ChargeTimeEstimator()
     private val dischargeTimeEstimator = DischargeTimeEstimator()
@@ -97,18 +102,10 @@ class BatteryEngine internal constructor(private val context: Context) {
         val json = JSONObject(prefs.getString("values", "{}") ?: "{}")
         val saved = json.keys().asSequence().associateWith { key -> json.get(key).let { if (it == JSONObject.NULL) null else it } }
         return AlertTone.migrate(mapOf("chargeAlert" to true, "chargeLimit" to 80, "heatAlert" to true, "heatLimit" to 38,
-            "lowAlert" to false, "lowLimit" to 20, "chargingDashboard" to false, "chargingScreenSaver" to false) + saved)
+            "heatReminderMinutes" to 5, "lowAlert" to false, "lowLimit" to 20, "chargingDashboard" to release.dashboardDefault, "chargingScreenSaver" to false) + saved)
     }
     fun updateSetting(key: String, value: Any?) {
-        require(key in setOf("theme","fahrenheit","millivolts","dualCell","currentUnit","currentPolarity","chargeAlert","chargeLimit","lowAlert","lowLimit","heatAlert","heatLimit","sound","lockScreen","notificationFormat","notificationIntervalSeconds","networkEnabled","keepRecordings","chargingDashboard","chargingScreenSaver")) { "Unknown setting" }
-        val checked = when (key) {
-            "networkEnabled", "keepRecordings", "chargingDashboard", "chargingScreenSaver" -> value as Boolean
-            "chargeLimit" -> (value as Number).toInt().also { require(it in 50..100) }
-            "lowLimit" -> (value as Number).toInt().also { require(it in 5..50) }
-            "heatLimit" -> (value as Number).toInt().also { require(it in 35..50) }
-            "notificationIntervalSeconds" -> (value as Number).toInt().also { require(it in setOf(1, 3, 5) && value.toDouble() == it.toDouble()) }
-            else -> value
-        }
+        val checked = SettingValidation.check(key, value, allowTone = false)
         if (key == "currentUnit" || key == "currentPolarity") {
             currentNormalizer.resetCalibration()
             prefs.edit().remove("currentDivisor").remove("currentInverted").apply()
@@ -120,7 +117,9 @@ class BatteryEngine internal constructor(private val context: Context) {
     }
 
     fun saveSettings(values: Map<String, Any?>, changedKey: String? = null) {
+        values.forEach { (key, value) -> SettingValidation.check(key, value, allowTone = true) }
         val previous = settings()
+        if (previous["heatLimit"] != values["heatLimit"] || values["heatAlert"] != true) clearTemperatureSnooze()
         alertMask = BatteryMath.rearmForSettings(alertMask, previous, values, changedKey)
         prefs.edit().putString("values", JSONObject(values).toString()).putInt("alertMask", alertMask).apply()
         if (previous["keepRecordings"] != values["keepRecordings"]) worker.execute { monitorStore.cleanup(values["keepRecordings"] == true, force = true) }
@@ -196,7 +195,28 @@ class BatteryEngine internal constructor(private val context: Context) {
         return read()
     }
 
+    private fun alertReading(): Map<String, Any?> {
+        seedSnapshotIfNeeded()
+        val b = intent
+        val raw = b?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = b?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val status = when (b?.getIntExtra(BatteryManager.EXTRA_STATUS, -1)) {
+            BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
+            BatteryManager.BATTERY_STATUS_FULL -> "Full"
+            BatteryManager.BATTERY_STATUS_DISCHARGING -> "Discharging"
+            else -> "Not charging"
+        }
+        return mapOf("time" to System.currentTimeMillis(), "level" to if (raw >= 0 && scale > 0) (100.0 * raw / scale).toInt().coerceIn(0, 100) else null,
+            "plugged" to (b?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0), "status" to status,
+            "temperatureC" to b?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)?.takeIf { it != Int.MIN_VALUE }?.div(10.0),
+            "settings" to settings(), "monitoring" to monitoring, "monitoringEnabled" to MonitorPreference.enabled(context),
+            "backgroundAlertsEnabled" to MonitorPreference.alertsEnabled(context), "backgroundAlertsRunning" to backgroundAlertsRunning,
+            "releasePreferences" to release.state(), "alarmActive" to (Alerts.existing()?.alarmActive == true))
+    }
+
     private fun read(): Map<String, Any?> {
+        if (backgroundAlertsRunning && !foreground && !dreaming && !monitoring) return alertReading()
+
         val now = System.currentTimeMillis()
         val b = intent
         val settings = settings()
@@ -309,7 +329,7 @@ class BatteryEngine internal constructor(private val context: Context) {
             "chargeCounterMah" to counter, "remainingMs" to remaining, "remainingSource" to remainingSource,
             "remainingState" to remainingState, "chargeObservationSeconds" to chargeTimeEstimator.observedSeconds,
             "historyError" to (monitorHistoryFailure ?: historyFailure),
-            "monitoring" to monitoring, "settings" to settings,
+            "releasePreferences" to release.state(), "backgroundAlertsEnabled" to MonitorPreference.alertsEnabled(context), "backgroundAlertsRunning" to backgroundAlertsRunning, "monitoring" to monitoring, "monitoringEnabled" to MonitorPreference.enabled(context), "settings" to settings,
             "onboarding" to onboarding.snapshot(),
             "sessionPrompt" to sessionPrompt,
             "optimized" to (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName),
@@ -351,6 +371,7 @@ class BatteryEngine internal constructor(private val context: Context) {
         reconcile()
     }
     fun stopMonitoring() {
+        if (!backgroundAlertsRunning) clearTemperatureSnooze()
         if (monitoring) sample(true)
         setMonitoring(false)
         val time = System.currentTimeMillis()
@@ -361,7 +382,7 @@ class BatteryEngine internal constructor(private val context: Context) {
         handler.post { monitorHistoryFailure = "Monitor recording could not be saved. Check device storage."; publishUi(read()) }
     }
     private fun reconcile() {
-        if (foreground || dreaming || monitoring) {
+        if (foreground || dreaming || monitoring || backgroundAlertsRunning) {
             if (!registered) {
                 val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED).apply {
                     addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED)
@@ -373,10 +394,10 @@ class BatteryEngine internal constructor(private val context: Context) {
                 }
                 registered = true
             }
-            requestHardware()
             handler.removeCallbacks(tick)
+            if (foreground || dreaming || monitoring) requestHardware()
             sample(foreground || monitoring)
-            handler.postDelayed(tick, sampleIntervalMs)
+            if (foreground || dreaming || monitoring) handler.postDelayed(tick, sampleIntervalMs)
         } else {
             if (registered) {
                 context.unregisterReceiver(receiver)
@@ -498,8 +519,25 @@ class BatteryEngine internal constructor(private val context: Context) {
         return latest
     }
 
+    private val bootCount: Int get() = android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, 0)
+    private fun clearTemperatureSnooze() { prefs.edit().remove("heatSnoozeUntil").remove("heatSnoozeBoot").apply() }
+    fun snoozeTemperature() {
+        if (Alerts.existing()?.temperatureActive != true) return
+        val minutes = (settings()["heatReminderMinutes"] as? Number)?.toInt() ?: 5
+        prefs.edit().putLong("heatSnoozeUntil", SystemClock.elapsedRealtime() + minutes * 60000L).putInt("heatSnoozeBoot", bootCount).apply()
+    }
+
     private fun evaluateAlerts(r: Map<String, Any?>) {
         val s = settings()
+        val temperature = (r["temperatureC"] as? Number)?.toDouble()
+        val limit = (s["heatLimit"] as Number).toInt()
+        val until = prefs.getLong("heatSnoozeUntil", 0)
+        val newBoot = prefs.getInt("heatEpisodeBoot", -1) != bootCount
+        if (newBoot || temperature != null && (temperature < limit - 2 || until > 0 && SystemClock.elapsedRealtime() >= until)) {
+            alertMask = alertMask and 4.inv()
+            clearTemperatureSnooze()
+            prefs.edit().putInt("alertMask", alertMask).putInt("heatEpisodeBoot", bootCount).apply()
+        }
         Alerts.existing()?.reconcile((r["plugged"] as Int) > 0, r["level"] as Int?, r["temperatureC"] as Double?, s)
         val (newMask, fired) = BatteryMath.alertMask(
             alertMask, (r["plugged"] as Int) > 0, r["status"] == "Charging" || (r["status"] == "Full" && (r["plugged"] as Int) > 0), r["level"] as Int?, r["temperatureC"] as Double?,

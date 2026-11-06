@@ -1,3 +1,4 @@
+import 'decision_dialog.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -29,7 +30,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
   int index = 0;
   bool _animateTab = false;
   final _navigator = GlobalKey<NavigatorState>();
-  bool _showingSessionPrompt = false;
+  bool _showingSessionPrompt = false, _showingSettingsIntro = false;
   bool _launchResolved = false, _showWelcome = false;
   @override
   void initState() {
@@ -53,7 +54,10 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     controller.setAppActive(state == AppLifecycleState.resumed);
-    if (state == AppLifecycleState.resumed) _checkSessionPrompt();
+    if (state == AppLifecycleState.resumed) {
+      _checkSessionPrompt();
+      _checkSettingsIntro();
+    }
   }
 
   void _checkSessionPrompt() {
@@ -63,6 +67,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
         controller.onboardingVisible ||
         controller.chargingDashboardVisible ||
         _showingSessionPrompt ||
+        _showingSettingsIntro ||
         !controller.appActive ||
         controller.sessionPrompt == null) {
       return;
@@ -90,7 +95,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
             prompt['kind'] == 'openReport' ||
             await showDialog<bool>(
                   context: context,
-                  builder: (dialogContext) => AlertDialog(
+                  builder: (dialogContext) => DecisionDialog(
                     title: Text(
                       enable
                           ? 'Record this charging session?'
@@ -150,10 +155,109 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
         }
       } finally {
         _showingSessionPrompt = false;
-        if (mounted) _checkSessionPrompt();
+        if (mounted) {
+          _checkSessionPrompt();
+          _checkSettingsIntro();
+        }
       }
     });
     WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _checkSettingsIntro() {
+    if (!mounted ||
+        index != 2 ||
+        !controller.ready ||
+        _showWelcome ||
+        !controller.appActive ||
+        _showingSessionPrompt ||
+        _showingSettingsIntro ||
+        controller.onboardingVisible ||
+        controller.chargingDashboardVisible ||
+        (controller.settingsIntroAcknowledged &&
+            controller.backgroundAlertsOffered)) {
+      return;
+    }
+    _showingSettingsIntro = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final context = _navigator.currentContext;
+      try {
+        if (!mounted || context == null || !context.mounted || index != 2) {
+          return;
+        }
+        if (_navigator.currentState?.canPop() == true) return;
+        if (!controller.settingsIntroAcknowledged) {
+          final accepted = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => DecisionDialog(
+              title: const Text('Make Fittery yours'),
+              content: const Text(
+                'Explore Settings to personalize your battery experience.\n\n'
+                '• Charging Dashboard and lock-screen options\n'
+                '• Battery-level and temperature alerts\n'
+                '• Custom alarm thresholds and sounds\n'
+                '• Background Alerts without recording\n'
+                '• Monitor Mode and notification refresh intervals\n'
+                '• Charging history, graphs, and display preferences',
+              ),
+              actions: [
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Explore Settings'),
+                ),
+              ],
+            ),
+          );
+          if (accepted != true) return;
+          await controller.acknowledgeRelease('settingsIntroAcknowledged');
+        }
+        if (!mounted ||
+            !context.mounted ||
+            index != 2 ||
+            !controller.appActive ||
+            controller.backgroundAlertsOffered) {
+          return;
+        }
+        if (controller.backgroundAlertsEnabled) {
+          await controller.acknowledgeRelease('backgroundAlertsOffered');
+          return;
+        }
+        final enable = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => DecisionDialog(
+            title: const Text('Alerts, even when Fittery is closed'),
+            content: const Text(
+              'Background Alerts watches battery level and temperature using Android battery updates. It uses your existing thresholds and sounds without recording statistics or enabling Monitor Mode. A quiet status notification stays available; Android may delay updates or restrict background activity.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Not Now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Enable Background Alerts'),
+              ),
+            ],
+          ),
+        );
+        if (enable == null) return;
+        if (enable) await controller.setBackgroundAlerts(true);
+        await controller.acknowledgeRelease('backgroundAlertsOffered');
+      } catch (e) {
+        if (context != null && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Your preference could not be saved. Try again in Settings.',
+              ),
+            ),
+          );
+        }
+      } finally {
+        _showingSettingsIntro = false;
+      }
+    });
   }
 
   bool _resolveLaunch() {
@@ -167,6 +271,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
   void _controllerChanged() {
     if (_resolveLaunch() && mounted) setState(() {});
     _checkSessionPrompt();
+    _checkSettingsIntro();
   }
 
   void _finishWelcome() {
@@ -241,7 +346,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(7),
                             child: Image.asset(
-                              'fittery_app_drawer_512.png',
+                              'store-assets/app-icon-512.png',
                               width: 28,
                               height: 28,
                               excludeFromSemantics: true,
@@ -329,6 +434,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
                       });
                       controller.setDashboardVisible(value == 0);
                       controller.setHistoryVisible(value == 1);
+                      _checkSettingsIntro();
                     },
                     destinations: const [
                       NavigationDestination(
@@ -476,7 +582,7 @@ class MetricPanel extends Panel {
           borderRadius: BorderRadius.circular(14),
           onTap: () => showDialog<void>(
             context: context,
-            builder: (ctx) => AlertDialog(
+            builder: (ctx) => DecisionDialog(
               title: const Text('About battery health'),
               content: SingleChildScrollView(
                 child: Text(
@@ -1670,6 +1776,83 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(24, 0, 24, 30),
     children: [
+      Padding(
+        padding: const EdgeInsets.only(top: 16, bottom: 12),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: Image.asset(
+                'store-assets/app-icon-512.png',
+                width: 68,
+                height: 68,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Fittery',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Know Your Battery',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SectionLabel('Background Alerts'),
+      Panel(child: _BackgroundAlertsControl(c: c)),
+      const SectionLabel('Charging dashboard'),
+      Panel(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Column(
+          children: [
+            toggle(
+              context,
+              'Enable charging dashboard',
+              'chargingDashboard',
+              subtitle:
+                  'Open manually while plugged in. Can appear above the lock screen; your device stays locked. Normal screen timeout applies.',
+            ),
+            toggle(
+              context,
+              'Charging dashboard on lock screen',
+              'chargingScreenSaver',
+              subtitle:
+                  'Use Android’s screen saver while charging and idle. Select Fittery in system settings. Start timing and lock behavior depend on your phone.',
+            ),
+            if (c.flag('chargingScreenSaver'))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: OutlinedButton.icon(
+                  key: const ValueKey('screen-saver-setup'),
+                  onPressed: () =>
+                      runAction(context, () => c.action('screenSaverSettings')),
+                  icon: const Icon(Icons.settings_display_outlined),
+                  label: const Text('Set up Android screen saver'),
+                ),
+              ),
+            if (c.flag('chargingDashboard'))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: ChargingDashboardEntry(c: c),
+              ),
+          ],
+        ),
+      ),
       const SectionLabel('Alert sounds'),
       Panel(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
@@ -1753,44 +1936,6 @@ class SettingsPage extends StatelessWidget {
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
-      const SectionLabel('Charging dashboard'),
-      Panel(
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-        child: Column(
-          children: [
-            toggle(
-              context,
-              'Enable charging dashboard',
-              'chargingDashboard',
-              subtitle:
-                  'Open manually while plugged in. Can appear above the lock screen; your device stays locked. Normal screen timeout applies.',
-            ),
-            toggle(
-              context,
-              'Charging dashboard on lock screen',
-              'chargingScreenSaver',
-              subtitle:
-                  'Use Android’s screen saver while charging and idle. Select Fittery in system settings. Start timing and lock behavior depend on your phone.',
-            ),
-            if (c.flag('chargingScreenSaver'))
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                child: OutlinedButton.icon(
-                  key: const ValueKey('screen-saver-setup'),
-                  onPressed: () =>
-                      runAction(context, () => c.action('screenSaverSettings')),
-                  icon: const Icon(Icons.settings_display_outlined),
-                  label: const Text('Set up Android screen saver'),
-                ),
-              ),
-            if (c.flag('chargingDashboard'))
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                child: ChargingDashboardEntry(c: c),
-              ),
-          ],
-        ),
-      ),
       const SectionLabel('Alerts & thresholds'),
       Panel(
         child: Column(
@@ -1827,6 +1972,42 @@ class SettingsPage extends StatelessWidget {
               '°C',
               'Warn when the battery gets too warm',
             ),
+            ListTile(
+              key: const ValueKey('heat-reminder-interval'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Temperature reminder interval',
+                style: TextStyle(fontSize: 14),
+              ),
+              subtitle: Text(
+                'Remind again after snoozing: ${c.settings['heatReminderMinutes']} minutes',
+                style: const TextStyle(fontSize: 11),
+              ),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () async {
+                final minutes = await showDialog<int>(
+                  context: context,
+                  builder: (ctx) => SimpleDialog(
+                    title: const Text('Temperature reminder interval'),
+                    children: List.generate(
+                      30,
+                      (i) => SimpleDialogOption(
+                        onPressed: () => Navigator.pop(ctx, i + 1),
+                        child: Text(
+                          '${i + 1} ${i == 0 ? 'minute' : 'minutes'}',
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+                if (minutes != null && context.mounted) {
+                  await runAction(
+                    context,
+                    () => c.save('heatReminderMinutes', minutes),
+                  );
+                }
+              },
+            ),
           ],
         ),
       ),
@@ -1859,33 +2040,43 @@ class SettingsPage extends StatelessWidget {
             ),
             ListTile(
               leading: const Icon(Icons.update_rounded),
+              titleAlignment: ListTileTitleAlignment.top,
               title: const Text(
                 'Notification refresh interval',
                 style: TextStyle(fontSize: 14),
               ),
-              subtitle: const Text(
-                'Updates the monitor notification. Recording stays at 3 seconds. Android may delay updates while asleep.',
-                style: TextStyle(fontSize: 11),
-              ),
-              trailing: DropdownButton<int>(
-                key: const ValueKey('notification-refresh-interval'),
-                value:
-                    (c.settings['notificationIntervalSeconds'] as num?)
-                        ?.toInt() ??
-                    1,
-                items: const [
-                  DropdownMenuItem(value: 1, child: Text('1 second')),
-                  DropdownMenuItem(value: 3, child: Text('3 seconds')),
-                  DropdownMenuItem(value: 5, child: Text('5 seconds')),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Updates the monitor notification. Recording stays at 3 seconds. Android may delay updates while asleep.',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  const SizedBox(height: 4),
+                  DropdownButton<int>(
+                    isExpanded: true,
+                    itemHeight: null,
+                    key: const ValueKey('notification-refresh-interval'),
+                    value:
+                        (c.settings['notificationIntervalSeconds'] as num?)
+                            ?.toInt() ??
+                        1,
+                    items: const [
+                      DropdownMenuItem(value: 1, child: Text('1 second')),
+                      DropdownMenuItem(value: 3, child: Text('3 seconds')),
+                      DropdownMenuItem(value: 5, child: Text('5 seconds')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        runAction(
+                          context,
+                          () => c.save('notificationIntervalSeconds', value),
+                        );
+                      }
+                    },
+                  ),
                 ],
-                onChanged: (value) {
-                  if (value != null) {
-                    runAction(
-                      context,
-                      () => c.save('notificationIntervalSeconds', value),
-                    );
-                  }
-                },
               ),
             ),
             toggle(context, 'Show on lock screen', 'lockScreen'),
@@ -1950,6 +2141,42 @@ class SettingsPage extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         child: Column(
           children: [
+            SwitchListTile(
+              key: const ValueKey('background-monitor-settings'),
+              title: const Text(
+                'Background monitoring',
+                style: TextStyle(fontSize: 14),
+              ),
+              subtitle: const Text(
+                'Record battery history and run enabled alerts while Fittery is closed. Resume after restarting your phone.',
+                style: TextStyle(fontSize: 11),
+              ),
+              value: c.monitoringEnabled,
+              onChanged: (enabled) =>
+                  runAction(context, () => c.setMonitoring(enabled)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text(
+                !c.monitoringEnabled
+                    ? 'Background alerts and recording are off. Enable monitoring to use them while Fittery is closed.'
+                    : !c.monitoring
+                    ? 'Monitoring could not start. Open Fittery again or turn monitoring off and on to retry.'
+                    : 'Monitoring is running. Android battery restrictions may delay updates.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
+      Panel(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Column(
+          children: [
             ListTile(
               leading: const Icon(Icons.shield_outlined, color: mint),
               title: const Text(
@@ -1979,7 +2206,7 @@ class SettingsPage extends StatelessWidget {
               onTap: () async {
                 await showDialog<void>(
                   context: context,
-                  builder: (ctx) => AlertDialog(
+                  builder: (ctx) => DecisionDialog(
                     title: const Text('Keep monitoring running'),
                     content: const Text(
                       'In your phone’s app settings, allow autostart or auto-launch, set battery usage to unrestricted, and allow notifications. On MIUI / HyperOS, also lock Fittery in recent apps if monitoring is interrupted.\n\nNames and availability vary by manufacturer.',
@@ -2010,7 +2237,7 @@ class SettingsPage extends StatelessWidget {
               onTap: () async {
                 final clear = await showDialog<bool>(
                   context: context,
-                  builder: (ctx) => AlertDialog(
+                  builder: (ctx) => DecisionDialog(
                     title: const Text('Clear all history?'),
                     content: const Text(
                       'This permanently removes all recordings and saved readings from this device. If monitoring is on, a new recording will begin.',
@@ -2290,4 +2517,43 @@ class SettingsPage extends StatelessWidget {
           : 'Alarm off · target saved',
     );
   }
+}
+
+class _BackgroundAlertsControl extends StatefulWidget {
+  const _BackgroundAlertsControl({required this.c});
+  final BatteryController c;
+  @override
+  State<_BackgroundAlertsControl> createState() =>
+      _BackgroundAlertsControlState();
+}
+
+class _BackgroundAlertsControlState extends State<_BackgroundAlertsControl> {
+  bool busy = false;
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    key: const ValueKey('background-alerts-settings'),
+    contentPadding: EdgeInsets.zero,
+    title: const Text('Background Alerts'),
+    subtitle: Text(
+      widget.c.backgroundAlertsEnabled
+          ? widget.c.backgroundAlertsRunning
+                ? 'Watching battery level and temperature. Monitor Mode is independent.'
+                : 'Waiting to start. Reopen Fittery or turn this off and on to retry.'
+          : 'Run your configured alarms while Fittery is closed, without recording or enabling Monitor Mode.',
+    ),
+    value: widget.c.backgroundAlertsEnabled,
+    onChanged: busy
+        ? null
+        : (value) async {
+            setState(() => busy = true);
+            try {
+              await runAction(
+                context,
+                () => widget.c.setBackgroundAlerts(value),
+              );
+            } finally {
+              if (mounted) setState(() => busy = false);
+            }
+          },
+  );
 }

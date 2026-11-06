@@ -33,6 +33,12 @@ void main() {
           ),
         ),
       );
+      await tester.scrollUntilVisible(
+        find.byKey(ValueKey('alarm-tone-$event')),
+        200,
+      );
+      await tester.ensureVisible(find.byKey(ValueKey('alarm-tone-$event')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('alarm-tone-$event')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('alarm-tone-file')));
@@ -62,7 +68,7 @@ void main() {
         ),
       );
       final choice = find.byKey(const ValueKey('alarm-tone-charge'));
-      await tester.ensureVisible(choice);
+      await tester.scrollUntilVisible(choice, 150);
       await tester.pumpAndSettle();
       await tester.tap(choice);
       await tester.pumpAndSettle();

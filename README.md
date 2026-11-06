@@ -1,5 +1,9 @@
 # Fittery
 
+**Current release: v1.2.0 (Build 27)** · **Know Your Battery**
+
+Read the [first GitHub release notes](docs/releases/v1.2.0.md) for the complete feature overview, changes, installation guidance, and artifact checksums. The matching Git tag is `v1.2.0`; the Flutter package version is `1.2.0+27`.
+
 A private Android battery monitor built with Flutter and a direct Kotlin bridge. The app has three tabs: Dashboard, History, and Settings. No ads, accounts, analytics, or remote services. Charts use the fl_chart package.
 
 ## Run
@@ -38,9 +42,9 @@ Enable the optional charging dashboard in Settings, then touch the main battery 
 
 ## App branding
 
-`fittery_app_drawer_512.png` is the icon-only artwork used in the launcher and dashboard header. `fittery500x500_splash.png` contains the wordmark and is used for the native splash screen. Android 12+ uses a padded version to keep the full artwork inside the system's circular splash mask. Both light and dark system modes use the same dark splash background.
+`FitteryLogo_512x512.png` is the icon artwork used for legacy launcher icons, the dashboard header, onboarding, and the Play Store upload. `FitteryNoBG.svg` supplies the transparent symbol for the adaptive launcher icon. `FitteryTransparentSplash_512x512.png` contains the symbol and wordmark used for the native splash screen. Android 12+ uses a padded version to keep the full artwork inside the system's circular splash mask. Both light and dark system modes use the same dark splash background.
 
-After replacing either original PNG, run `.\tools\generate_branding.ps1` in PowerShell on Windows to regenerate the Android launcher sizes, adaptive foreground, and splash asset. Rebuild and restart the app to see native branding changes.
+After replacing the source artwork, run `.\tools\generate_branding.ps1` in PowerShell on Windows to regenerate the Android launcher sizes, adaptive foreground, and splash asset. Run `.\tools\generate_store_assets.ps1 -IconOnly` to update the shared in-app logo and Play Store icon without regenerating the feature graphic. Rebuild and restart the app to see native branding changes. Upload `store-assets/app-icon-512.png` separately in Play Console to update the store listing.
 
 ## Architecture
 
@@ -108,3 +112,8 @@ Android references: [BatteryManager](https://developer.android.com/reference/and
 ## License
 
 Fittery is licensed under the [GNU General Public License v3.0](LICENSE).
+
+
+## v1.2.0
+
+Settings includes compact Fittery branding, a one-time introduction, and independent Background Alerts. Alerts use Android battery events without recording; Monitor Mode retains its recording/statistics and existing alarms. See [background behavior and device checks](docs/background-monitoring.md). New installs enable the manual Charging Dashboard by default; existing choices are preserved. Lock-screen screen saver selection remains optional.

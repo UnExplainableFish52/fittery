@@ -381,7 +381,7 @@ class _MonitorRecordingPageState extends State<MonitorRecordingPage> {
     var draft = recordingName(record);
     final name = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => DecisionDialog(
         title: const Text('Rename recording'),
         content: TextFormField(
           initialValue: draft,
@@ -416,7 +416,7 @@ class _MonitorRecordingPageState extends State<MonitorRecordingPage> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => DecisionDialog(
         title: const Text('Delete this recording?'),
         content: const Text(
           'Its saved measurements and report will be permanently removed from this device.',

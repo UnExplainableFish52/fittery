@@ -68,6 +68,8 @@ void main() {
           controller: c
             ..ready = true
             ..onboardingCompleted = true
+            ..settingsIntroAcknowledged = true
+            ..backgroundAlertsOffered = true
             ..showOnboardingOnLaunch = false,
         ),
       );
@@ -123,6 +125,8 @@ void main() {
           controller: c
             ..ready = true
             ..onboardingCompleted = true
+            ..settingsIntroAcknowledged = true
+            ..backgroundAlertsOffered = true
             ..showOnboardingOnLaunch = false,
         ),
       );
