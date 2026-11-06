@@ -1,0 +1,48 @@
+Fittery — Know Your Battery
+
+Understand your phone's battery with live readings, charging insights, local history, and alerts you control. Fittery brings your battery information together in a clean Android app, with no ads, accounts, analytics, or tracking SDKs.
+
+CHECK YOUR BATTERY AT A GLANCE
+
+View battery percentage, charging status, temperature, voltage, net current, and battery-side power. Explore interactive graphs and supported device information, including cycle count and capacity where available. Charging-time and remaining-time estimates help put the readings in context.
+
+Use the measurements to compare charging conditions, spot changes in net charging power, and understand how phone use affects the battery.
+
+MAKE CHARGING YOUR OWN
+
+Open the full-screen Charging Dashboard while plugged in for a dedicated view of your charging information. Use the main battery display, the Fullscreen Dashboard button, or Settings to open it.
+
+For an optional charging display while your phone is idle, enable the charging screen saver and select Fittery in Android's screen-saver settings. Lock-screen behavior and activation depend on your phone and system settings. Your device's normal authentication stays in place.
+
+SET ALERTS THAT SUIT YOUR ROUTINE
+
+Choose your charging target, low-battery level, and temperature threshold. Select system alarm tones or a supported audio file, preview sounds, and silence or snooze active alarms. Audible alerts use your phone's alarm volume.
+
+Charging-target alerts remind you when it is time to unplug. Fittery does not stop charging automatically.
+
+BACKGROUND ALERTS WITHOUT RECORDING
+
+Enable optional Background Alerts to watch battery level and temperature while the app's screen is closed. This lightweight mode responds to Android battery updates and reuses your configured thresholds and sounds without recording statistics or enabling Monitor Mode.
+
+A quiet foreground-service notification identifies the active feature. Background Alerts has its own control, so you can use it independently of recording. Android and manufacturer restrictions may delay or interrupt background operation.
+
+RECORD AND REVIEW WITH MONITOR MODE
+
+Turn on Monitor Mode to record charging and discharging activity, review battery trends, and keep your configured alarms active while using other apps. Browse saved recordings by date, inspect graphs and charging summaries, rename recordings, or delete them.
+
+Completed recordings expire after 30 days by default. Turn on Keep recordings until I delete them to retain them. Active recordings are protected. Background Alerts alone does not create recordings.
+
+PERSONALIZE YOUR EXPERIENCE
+
+Explore Settings to adjust alert thresholds, sounds, dashboard options, notification details, display units, and System, Dark, or AMOLED Black themes. Choose a 1-, 3-, or 5-second refresh interval for the live monitor notification. Optional network activity shows available device-wide traffic information on the Dashboard.
+
+PRIVATE BY DESIGN
+
+Your readings, recordings, preferences, and selected audio references stay on your device. The release app does not request Internet permission. Optional website and email links open external applications.
+
+PLEASE NOTE
+
+Available measurements depend on your phone's hardware and firmware. Battery-health and time-remaining values are estimates. Battery-side power can differ from charger wattage. Background alerts depend on Android battery-event delivery, notification permissions, and device power settings; exact delivery times are not guaranteed. Force-stopping the app can stop its background features.
+
+Support: sharma@saksham.info.np
+Privacy policy: https://saksham.info.np/fittery-privacy.html
