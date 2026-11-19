@@ -37,8 +37,8 @@ object BatteryMath {
         heatEnabled: Boolean, heatLimit: Int
     ): Pair<Int, Int> {
         var mask = previous
-        if (!plugged) mask = mask and 1.inv()
-        if (plugged) mask = mask and 2.inv()
+        if (!plugged || level != null && level < chargeLimit) mask = mask and 1.inv()
+        if (plugged || level != null && level > lowLimit) mask = mask and 2.inv()
         if (temperature != null && temperature < heatLimit - 2) mask = mask and 4.inv()
         var fired = 0
         if (chargeEnabled && plugged && level != null && level >= chargeLimit && mask and 1 == 0) fired = fired or 1

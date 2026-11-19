@@ -46,6 +46,22 @@ class AlertsTest {
     }
     @After fun cleanup() { alerts.stop() }
 
+    @Test fun perAlertAcknowledgmentKeepsOtherNotificationsAndAudio() {
+        alerts.notify(11, "Charge", "Target", settings)
+        alerts.notify(13, "Heat", "Warm", settings)
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val charge = manager.activeNotifications.first { it.id == 11 }.notification
+        val heat = manager.activeNotifications.first { it.id == 13 }.notification
+        assertNotEquals(charge.actions[0].actionIntent, heat.actions[0].actionIntent)
+        AlarmDismissReceiver().onReceive(context, Intent().putExtra("alertMask", 1))
+        assertEquals(4, alerts.activeMask)
+        assertFalse(manager.activeNotifications.any { it.id == 11 })
+        assertTrue(manager.activeNotifications.any { it.id == 13 })
+        AlarmDismissReceiver().onReceive(context, Intent().putExtra("alertMask", 4))
+        assertEquals(0, alerts.activeMask)
+        assertTrue(BatteryEngine.get(context).temperatureSnoozed())
+    }
+
     @Test fun eachAlertPreviewsItsDedicatedVoiceWithoutLooping() {
         for (tone in AlertTone.entries) {
             assertTrue(alerts.startPreview(emptyMap(), tone))

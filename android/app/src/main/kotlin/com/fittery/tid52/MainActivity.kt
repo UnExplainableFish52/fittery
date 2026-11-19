@@ -45,6 +45,9 @@ class MainActivity : FlutterActivity() {
                             result.success(null)
                         }
                     }
+                    "notificationPermission" -> result.success(NotificationPermission.status(this))
+                    "requestNotifications" -> withNotifications(result) { }
+                    "acknowledgeAlert" -> { battery.acknowledgeAlert((call.arguments as Number).toInt()); result.success(null) }
                     "initial" -> result.success(battery.snapshot())
                     "screenSaverSettings" -> {
                         open(Intent(Settings.ACTION_DREAM_SETTINGS), Intent(Settings.ACTION_DISPLAY_SETTINGS))
@@ -78,8 +81,8 @@ class MainActivity : FlutterActivity() {
                     "updateSetting" -> {
                         val key = call.argument<String>("key") ?: error("Missing setting key")
                         val value = call.argument<Any?>("value")
-                        val alert = when (key) { "chargeLimit" -> "chargeAlert"; "lowLimit" -> "lowAlert"; "heatLimit" -> "heatAlert"; else -> key }
-                        val needsNotifications = alert in setOf("chargeAlert", "lowAlert", "heatAlert") && (if (key == alert) value == true else battery.settings()[alert] == true)
+                        // Saving thresholds is local configuration, not enabling delivery.
+                        val needsNotifications = NotificationPermission.requiredForSetting(key, value)
                         if (needsNotifications) withNotifications(result) { battery.updateSetting(key, value); ChargingDreamService.syncAvailability(this) }
                         else { battery.updateSetting(key, value); ChargingDreamService.syncAvailability(this); result.success(null) }
                     }
@@ -97,9 +100,9 @@ class MainActivity : FlutterActivity() {
                     }
                     "settings" -> {
                         @Suppress("UNCHECKED_CAST") val values = call.arguments as Map<String,Any?>
-                        battery.saveSettings(values)
-                        ChargingDreamService.syncAvailability(this)
-                        result.success(null)
+                        val enabling = listOf("chargeAlert", "lowAlert", "heatAlert").any { values[it] == true && battery.settings()[it] != true }
+                        if (enabling) withNotifications(result) { battery.saveSettings(values); ChargingDreamService.syncAvailability(this) }
+                        else { battery.saveSettings(values); ChargingDreamService.syncAvailability(this); result.success(null) }
                     }
                     "monitoring" -> {
                         if (call.arguments == true) {
@@ -240,8 +243,10 @@ class MainActivity : FlutterActivity() {
     private fun withNotifications(result: MethodChannel.Result, action: () -> Unit) {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             if (permissionResult != null) result.error("BUSY", "A notification request is already open.", null)
-            else { permissionResult = result; permissionAction = action; requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101) }
-        } else { action(); result.success(null) }
+            else if (NotificationPermission.status(this)["canRequest"] != true) result.error("NOTIFICATIONS", "Enable notifications in app notification settings.", null)
+            else { permissionResult = result; permissionAction = action; NotificationPermission.markAsked(this); requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101) }
+        } else if (!NotificationPermission.allowed(this)) result.error("NOTIFICATIONS", "Enable notifications in app notification settings.", null)
+        else { action(); result.success(null) }
     }
     private fun startMonitor() {
         val previous = MonitorPreference.enabled(this)
@@ -264,6 +269,7 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         if (::battery.isInitialized) {
             battery.setForeground(true)
+            battery.refresh()
             if (MonitorPreference.requested(this) && (!battery.monitoring && MonitorPreference.enabled(this) || !battery.backgroundAlertsRunning && MonitorPreference.alertsEnabled(this))) {
                 try { MonitorPreference.start(this) }
                 catch (e: RuntimeException) { android.util.Log.w("Fittery", "Monitoring could not resume", e) }
@@ -298,7 +304,7 @@ class MainActivity : FlutterActivity() {
         if (requestCode == 101) {
             val result = permissionResult; permissionResult = null
             val action = permissionAction; permissionAction = null
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && NotificationPermission.allowed(this)) {
                 try { action?.invoke(); result?.success(null) } catch (e: Exception) { result?.error("ANDROID",e.message,null) }
             } else result?.error("NOTIFICATIONS","Allow notifications in Settings so Fittery can show battery alerts.",null)
         }

@@ -215,6 +215,22 @@ class BatteryEngineTest {
         if (sequence != null) putExtra("seq", sequence)
     }
 
+    @Test fun alertsOnlyDoesNotOfferLiveRecordingWhenChargerConnects() {
+        engine.receiveBatteryIntent(snapshotIntent(50, false, 1))
+        engine.setForeground(true)
+        engine.receiveBatteryIntent(snapshotIntent(50, true, 2))
+        assertNotNull(engine.snapshot()["sessionPrompt"])
+        engine.setBackgroundAlerts(true)
+        assertNull(engine.snapshot()["sessionPrompt"])
+        engine.receiveBatteryIntent(snapshotIntent(50, false, 3))
+        engine.receiveBatteryIntent(snapshotIntent(50, true, 4))
+        assertNull(engine.snapshot()["sessionPrompt"])
+        assertFalse(engine.monitoring)
+        val notifications = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        assertFalse(notifications.activeNotifications.any { it.id == 20 })
+        engine.setBackgroundAlerts(false)
+    }
+
     @Test fun chargerReminderAppearsOncePerConnectionAndNeverStartsMonitoring() {
         engine.receiveBatteryIntent(snapshotIntent(50, false, 1))
         engine.setForeground(true)

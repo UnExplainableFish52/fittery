@@ -1,7 +1,7 @@
 name: fittery
 description: A lightweight, private Android battery monitor.
 publish_to: none
-version: 1.2.0+27
+version: 1.2.1+28
 
 environment:
   sdk: ^3.11.5

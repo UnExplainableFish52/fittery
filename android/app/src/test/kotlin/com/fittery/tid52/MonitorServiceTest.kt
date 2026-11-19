@@ -71,6 +71,20 @@ class MonitorServiceTest {
         })
     }
 
+    @Test fun notificationElementsPersistAndRenderOnlySelectedMetrics() {
+        engine.updateSetting("notificationElements", listOf("Current", "Temperature"))
+        assertEquals(listOf("Current", "Temperature"), engine.settings()["notificationElements"])
+        val detail = text()
+        assertTrue(detail.contains("mA"))
+        assertTrue(detail.contains("Temperature"))
+        assertFalse(detail.contains("Power"))
+        assertFalse(detail.contains(" W"))
+        assertFalse(detail.contains("Time estimate"))
+        // A later unrelated settings write must accept the reloaded JSON list.
+        engine.updateSetting("sound", false)
+        assertEquals(listOf("Current", "Temperature"), engine.settings()["notificationElements"])
+    }
+
     @Test fun monitoringSilenceStopsHeatWithoutStoppingMonitoringOrRetriggeringWhileHot() {
         engine.updateSetting("notificationIntervalSeconds", 5)
         // Also exercise the UI's normal telemetry throttle: an alarm change
@@ -96,10 +110,11 @@ class MonitorServiceTest {
         shadowOf(Looper.getMainLooper()).idleFor(10, TimeUnit.SECONDS)
         assertNull(notification(13))
         assertEquals(playerCount, AlarmRingtoneManagerShadow.players.size)
-        // Existing two-degree recovery margin prevents repeated warnings
-        // around the threshold; cooling below 36 rearms a 38-degree limit.
+        // Cooling and reheating must not bypass the active snooze deadline.
         temperature(359, 7)
         temperature(380, 8)
+        assertNull(notification(13))
+        shadowOf(Looper.getMainLooper()).idleFor(290, TimeUnit.SECONDS)
         assertNotNull(notification(13))
         assertTrue(AlarmRingtoneManagerShadow.players.last().isPlaying)
         assertTrue(notification(1)!!.actions.any { it.title.toString().startsWith("Snooze for") })

@@ -75,6 +75,9 @@ void main() {
       var requests = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(BatteryController.channel, (call) async {
+            if (call.method == 'notificationPermission') {
+              return {'allowed': false, 'canRequest': true};
+            }
             if (call.method == 'monitoring') {
               requests++;
               await permission.future;
@@ -96,13 +99,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(find.text('Open Settings'), findsOneWidget);
+      await tester.tap(find.text('Not now'));
+      await tester.pumpAndSettle();
       expect(c.monitoring, isFalse);
       expect(tester.widget<SmoothToggle>(toggle).value, isFalse);
       expect(tester.widget<SmoothToggle>(toggle).onChanged, isNotNull);
-      expect(
-        find.text('Allow notifications to enable monitoring.'),
-        findsOneWidget,
-      );
+
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       c.dispose();

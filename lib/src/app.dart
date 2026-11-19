@@ -1,4 +1,6 @@
 import 'decision_dialog.dart';
+import 'notification_permission.dart';
+import 'notification_elements.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -18,6 +20,28 @@ part 'monitor_history.dart';
 part 'saved_metric_graph.dart';
 part 'metric_chart.dart';
 
+class _ModalObserver extends NavigatorObserver {
+  final VoidCallback onChanged;
+  _ModalObserver(this.onChanged);
+  int modals = 0;
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is PopupRoute) modals++;
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is PopupRoute) modals--;
+    WidgetsBinding.instance.addPostFrameCallback((_) => onChanged());
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is PopupRoute) modals--;
+    WidgetsBinding.instance.addPostFrameCallback((_) => onChanged());
+  }
+}
+
 class FitteryApp extends StatefulWidget {
   const FitteryApp({super.key, this.controller});
   final BatteryController? controller;
@@ -32,6 +56,124 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
   final _navigator = GlobalKey<NavigatorState>();
   bool _showingSessionPrompt = false, _showingSettingsIntro = false;
   bool _launchResolved = false, _showWelcome = false;
+  late final _modalObserver = _ModalObserver(_checkAlerts);
+  DialogRoute<void>? _alertRoute;
+  int _dialogAlertBit = 0;
+  bool _showingAlert = false;
+  int _shownAlertMask = 0;
+
+  void _dismissAlertRoute() {
+    final route = _alertRoute;
+    _alertRoute = null;
+    if (route != null && route.isActive) route.navigator?.removeRoute(route);
+  }
+
+  void _checkAlerts() {
+    final mask = controller.reading?.number('activeAlertMask')?.toInt() ?? 0;
+    _shownAlertMask &= mask;
+    final pending = mask & ~_shownAlertMask;
+    if (!mounted ||
+        !controller.appActive ||
+        _showWelcome ||
+        controller.onboardingVisible ||
+        _showingAlert ||
+        _showingSessionPrompt ||
+        _showingSettingsIntro ||
+        permissionDialogOpen ||
+        _modalObserver.modals > 0 ||
+        pending == 0) {
+      return;
+    }
+    _showingAlert = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final ctx = _navigator.currentContext;
+        if (!mounted ||
+            ctx == null ||
+            !ctx.mounted ||
+            !controller.appActive ||
+            _modalObserver.modals > 0) {
+          return;
+        }
+        final current =
+            (controller.reading?.number('activeAlertMask')?.toInt() ?? 0) &
+            ~_shownAlertMask;
+        if (current == 0) return;
+        final bit = current & 4 != 0
+            ? 4
+            : current & 1 != 0
+            ? 1
+            : 2;
+        _dialogAlertBit = bit;
+        _shownAlertMask |= bit;
+        final minutes = controller.settings['heatReminderMinutes'] ?? 5;
+        final title = switch (bit) {
+          4 => 'Battery temperature is high',
+          1 => 'Charging target reached',
+          _ => 'Battery is running low',
+        };
+        final message = switch (bit) {
+          4 =>
+            'Battery temperature is ${controller.reading?.number('temperatureC')}°C. Your alert threshold is ${controller.settings['heatLimit']}°C. Let your phone cool down.',
+          1 =>
+            'Battery is at ${controller.reading?.number('level')}%. Your charging target is ${controller.settings['chargeLimit']}%. You can unplug your charger.',
+          _ =>
+            'Battery is at ${controller.reading?.number('level')}%. Your low-battery limit is ${controller.settings['lowLimit']}%. Connect a charger soon.',
+        };
+        var acknowledging = false;
+        final route = DialogRoute<void>(
+          context: ctx,
+          barrierDismissible: false,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (dialogContext, updateDialog) => PopScope(
+              canPop: false,
+              child: AlertDialog(
+                title: Text(title),
+                content: Text(message),
+                actions: [
+                  FilledButton(
+                    onPressed: acknowledging
+                        ? null
+                        : () async {
+                            if (acknowledging) return;
+                            updateDialog(() => acknowledging = true);
+                            await runAction(dialogContext, () async {
+                              await BatteryController.channel
+                                  .invokeMethod<void>('acknowledgeAlert', bit);
+                              // A native event may already have removed this exact dialog.
+                              // Never pop the navigator: that could remove the user's page.
+                              _dismissAlertRoute();
+                              await controller.loadInitial();
+                            });
+                            if (dialogContext.mounted) {
+                              updateDialog(() => acknowledging = false);
+                            }
+                          },
+                    child: Text(
+                      bit == 4 ? 'Silence for $minutes Minutes' : 'Silence',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        _alertRoute = route;
+        await _navigator.currentState!.push(route);
+      } finally {
+        _alertRoute = null;
+        _dialogAlertBit = 0;
+        _showingAlert = false;
+        if (mounted) {
+          _checkAlerts();
+          _checkSessionPrompt();
+          _checkSettingsIntro();
+        }
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -40,6 +182,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     if (widget.controller == null) unawaited(controller.initialize());
     _resolveLaunch();
+    _checkAlerts();
     _checkSessionPrompt();
   }
 
@@ -55,6 +198,8 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     controller.setAppActive(state == AppLifecycleState.resumed);
     if (state == AppLifecycleState.resumed) {
+      unawaited(controller.loadInitial());
+      _checkAlerts();
       _checkSessionPrompt();
       _checkSettingsIntro();
     }
@@ -68,6 +213,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
         controller.chargingDashboardVisible ||
         _showingSessionPrompt ||
         _showingSettingsIntro ||
+        _showingAlert ||
         !controller.appActive ||
         controller.sessionPrompt == null) {
       return;
@@ -171,6 +317,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
         _showWelcome ||
         !controller.appActive ||
         _showingSessionPrompt ||
+        _showingAlert ||
         _showingSettingsIntro ||
         controller.onboardingVisible ||
         controller.chargingDashboardVisible ||
@@ -192,12 +339,13 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
             builder: (ctx) => DecisionDialog(
               title: const Text('Make Fittery yours'),
               content: const Text(
-                'Explore Settings to personalize your battery experience.\n\n'
+                'Your configured battery alerts can run with Background Alerts.\n\n'
+                'For detailed live readings and saved history, turn on the Monitor battery toggle in Settings. It updates the live notification and records battery changes more frequently. Turn it off whenever you only need alerts; Background Alerts stays independent.\n\n'
                 '• Charging Dashboard and lock-screen options\n'
                 '• Battery-level and temperature alerts\n'
                 '• Custom alarm thresholds and sounds\n'
                 '• Background Alerts without recording\n'
-                '• Monitor Mode and notification refresh intervals\n'
+                '• Optional live monitoring and notification refresh intervals\n'
                 '• Charging history, graphs, and display preferences',
               ),
               actions: [
@@ -242,7 +390,9 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
           ),
         );
         if (enable == null) return;
-        if (enable) await controller.setBackgroundAlerts(true);
+        if (enable && context.mounted) {
+          await enableBackgroundAlertsWithPermission(context, controller);
+        }
         await controller.acknowledgeRelease('backgroundAlertsOffered');
       } catch (e) {
         if (context != null && context.mounted) {
@@ -270,6 +420,11 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
 
   void _controllerChanged() {
     if (_resolveLaunch() && mounted) setState(() {});
+    final mask = controller.reading?.number('activeAlertMask')?.toInt() ?? 0;
+    if (_alertRoute != null && mask & _dialogAlertBit == 0) {
+      _dismissAlertRoute();
+    }
+    _checkAlerts();
     _checkSessionPrompt();
     _checkSettingsIntro();
   }
@@ -325,6 +480,7 @@ class _FitteryAppState extends State<FitteryApp> with WidgetsBindingObserver {
       return MaterialApp(
         restorationScopeId: 'fittery',
         navigatorKey: _navigator,
+        navigatorObservers: [_modalObserver],
         title: 'Fittery',
         debugShowCheckedModeBanner: false,
         theme: makeTheme(Brightness.light),
@@ -468,6 +624,15 @@ Future<void> runAction(
     await action();
   } catch (e) {
     if (context.mounted) {
+      if (e is PlatformException && e.code == 'NOTIFICATIONS') {
+        final controller = context
+            .findAncestorStateOfType<_FitteryAppState>()
+            ?.controller;
+        if (controller != null) {
+          await ensureNotificationPermission(context, controller);
+          return;
+        }
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -2025,19 +2190,7 @@ class SettingsPage extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         child: Column(
           children: [
-            choice(
-              context,
-              'Notification format',
-              'notificationFormat',
-              [
-                'All metrics',
-                'Current',
-                'Power',
-                'Temperature',
-                'Time remaining',
-              ],
-              Icons.notifications_outlined,
-            ),
+            NotificationElementsTile(controller: c),
             ListTile(
               leading: const Icon(Icons.update_rounded),
               titleAlignment: ListTileTitleAlignment.top,
@@ -2144,11 +2297,11 @@ class SettingsPage extends StatelessWidget {
             SwitchListTile(
               key: const ValueKey('background-monitor-settings'),
               title: const Text(
-                'Background monitoring',
+                'Monitor battery',
                 style: TextStyle(fontSize: 14),
               ),
               subtitle: const Text(
-                'Record battery history and run enabled alerts while Fittery is closed. Resume after restarting your phone.',
+                'Optional: record live battery changes and show updating readings in the notification panel. Turn off when you only need alerts.',
                 style: TextStyle(fontSize: 11),
               ),
               value: c.monitoringEnabled,
@@ -2159,7 +2312,7 @@ class SettingsPage extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Text(
                 !c.monitoringEnabled
-                    ? 'Background alerts and recording are off. Enable monitoring to use them while Fittery is closed.'
+                    ? 'Live recording is off. Background Alerts can still deliver your configured battery warnings.'
                     : !c.monitoring
                     ? 'Monitoring could not start. Open Fittery again or turn monitoring off and on to retry.'
                     : 'Monitoring is running. Android battery restrictions may delay updates.',

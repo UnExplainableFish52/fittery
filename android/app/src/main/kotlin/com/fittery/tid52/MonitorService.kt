@@ -21,7 +21,7 @@ class MonitorService : Service() {
         val seconds = ((reading["settings"] as? Map<*, *>)?.get("notificationIntervalSeconds") as? Number)?.toInt()
         return (seconds?.takeIf { it in setOf(1, 3, 5) } ?: 1) * 1000L
     }
-    private fun state(reading: Map<String, Any?>) = "${reading["plugged"]}/${reading["status"]}/${reading["level"]}/${reading["alarmActive"]}"
+    private fun state(reading: Map<String, Any?>) = "${reading["plugged"]}/${reading["status"]}/${reading["level"]}/${reading["activeAlertMask"]}"
     private fun publish(reading: Map<String, Any?>) {
         refreshMs = interval(reading)
         lastState = state(reading)
@@ -78,10 +78,6 @@ class MonitorService : Service() {
 
 class AlarmDismissReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        BatteryEngine.get(context).snoozeTemperature()
-        Alerts.get(context).silence()
-        // Keep the threshold latch: acknowledging heat must not retrigger on
-        // the next hot reading. Publish now so the monitoring action clears.
-        BatteryEngine.get(context).refresh()
+        BatteryEngine.get(context).acknowledgeAlert(intent.getIntExtra("alertMask", 7))
     }
 }

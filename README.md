@@ -1,8 +1,8 @@
 # Fittery
 
-**Current release: v1.2.0 (Build 27)** · **Know Your Battery**
+**Current version: v1.2.1 (Build 28)** · **Know Your Battery**
 
-Read the [first GitHub release notes](docs/releases/v1.2.0.md) for the complete feature overview, changes, installation guidance, and artifact checksums. The matching Git tag is `v1.2.0`; the Flutter package version is `1.2.0+27`.
+Read the [v1.2.1 release notes](docs/releases/v1.2.1.md) for the latest changes, installation guidance, and APK checksum. The Flutter package version is `1.2.1+28`; the intended release tag is `v1.2.1`. The [first GitHub release notes](docs/releases/v1.2.0.md) provide the complete feature overview.
 
 A private Android battery monitor built with Flutter and a direct Kotlin bridge. The app has three tabs: Dashboard, History, and Settings. No ads, accounts, analytics, or remote services. Charts use the fl_chart package.
 

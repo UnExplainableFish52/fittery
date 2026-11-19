@@ -8,18 +8,28 @@ import 'package:fittery/src/onboarding.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  var completed = false, showOnLaunch = true, failSave = false;
+  var completed = false,
+      showOnLaunch = true,
+      failSave = false,
+      alertsEnabled = false;
   final calls = <MethodCall>[];
   setUp(() {
     completed = false;
+    alertsEnabled = false;
     showOnLaunch = true;
     failSave = false;
     calls.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(BatteryController.channel, (call) async {
           calls.add(call);
+          if (call.method == 'backgroundAlerts') {
+            alertsEnabled = call.arguments == true;
+          }
+          if (call.method == 'notificationPermission') return {'allowed': true};
           if (call.method == 'initial') {
             return {
+              'notificationsAllowed': true,
+              'backgroundAlertsEnabled': alertsEnabled,
               'onboarding': {
                 'onboardingCompleted': completed,
                 'showOnboardingOnLaunch': showOnLaunch,
@@ -245,6 +255,30 @@ void main() {
     },
   );
 
+  testWidgets('Setup enables alerts without starting live monitoring', (
+    tester,
+  ) async {
+    final c = BatteryController()
+      ..ready = true
+      ..notificationsAllowed = true;
+    await tester.pumpWidget(FitteryApp(controller: c));
+    await tester.pumpAndSettle();
+    await tester.tap(skip);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.tap(next);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Enable alerts?'), findsOneWidget);
+    await tester.tap(find.text('Enable alerts'));
+    await tester.pumpAndSettle();
+    expect(c.backgroundAlertsEnabled, isTrue);
+    expect(c.monitoringEnabled, isFalse);
+    expect(c.backgroundAlertsOffered, isTrue);
+    expect(calls.where((call) => call.method == 'monitoring'), isEmpty);
+    await close(tester, c);
+  });
+
   testWidgets('A failed save stays on setup and can be retried', (
     tester,
   ) async {
@@ -314,6 +348,8 @@ void main() {
       expect(find.byType(NavigationBar), findsNothing);
       final load = c.loadInitial();
       initial.complete({
+        'notificationsAllowed': true,
+        'backgroundAlertsEnabled': alertsEnabled,
         'onboarding': {
           'onboardingCompleted': true,
           'showOnboardingOnLaunch': false,

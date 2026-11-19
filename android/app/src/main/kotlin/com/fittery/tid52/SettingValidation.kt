@@ -5,6 +5,10 @@ object SettingValidation {
     private val booleans = setOf("fahrenheit", "millivolts", "dualCell", "chargeAlert", "lowAlert", "heatAlert", "sound", "lockScreen", "networkEnabled", "keepRecordings", "chargingDashboard", "chargingScreenSaver")
     private val choices = mapOf("theme" to setOf("System default", "Dark", "AMOLED Black"), "currentUnit" to setOf("Auto", "µA", "mA"), "currentPolarity" to setOf("Auto", "Standard", "Inverted"), "notificationFormat" to setOf("All metrics", "Current", "Power", "Temperature", "Time remaining"))
     fun check(key: String, value: Any?, allowTone: Boolean): Any? {
+        if (key == "notificationElements") {
+            require(NotificationElements.valid(value)) { "Choose All metrics or one to three distinct notification elements" }
+            return (value as List<*>).toList()
+        }
         if (key in booleans) { require(value is Boolean) { "Expected a boolean for $key" }; return value }
         choices[key]?.let { require(value is String && value in it) { "Invalid choice for $key" }; return value }
         val range = when(key) { "chargeLimit" -> 50..100; "lowLimit" -> 5..50; "heatLimit" -> 35..50; "heatReminderMinutes" -> 1..30; "notificationIntervalSeconds" -> 1..5; else -> null }

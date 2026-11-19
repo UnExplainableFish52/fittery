@@ -1,4 +1,5 @@
 import 'decision_dialog.dart';
+import 'notification_permission.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -46,7 +47,7 @@ class _OnboardingPageState extends State<OnboardingPage>
     'Tell me more',
     "Okay, that's awesome!",
     "There's more?",
-    "Let's get started!",
+    'Understood',
   ];
 
   @override
@@ -144,15 +145,20 @@ class _OnboardingPageState extends State<OnboardingPage>
       _error = null;
     });
     try {
+      if (!widget.replay && !widget.c.onboardingCompleted) {
+        await ensureNotificationPermission(context, widget.c, initial: true);
+      }
+      if (!mounted) return;
       if (!widget.replay &&
+          widget.c.notificationsAllowed &&
           !widget.c.onboardingCompleted &&
-          !widget.c.monitoringEnabled) {
+          !widget.c.backgroundAlertsEnabled) {
         final enable = await showDialog<bool>(
           context: context,
           builder: (ctx) => DecisionDialog(
-            title: const Text('Enable background monitoring?'),
+            title: const Text('Enable alerts?'),
             content: const Text(
-              'Record battery history and run enabled alerts while Fittery is closed. Monitoring shows an ongoing notification and resumes after restarting your phone. You can turn it off in Settings. Android battery restrictions may delay updates.',
+              'Fittery can alert you when your battery reaches your charging target, runs low, or gets too warm, using the alerts you enable in Settings. Alerts work while Fittery is closed, with a quiet status notification. You can change your alerts and thresholds in Settings.',
             ),
             actions: [
               TextButton(
@@ -161,12 +167,17 @@ class _OnboardingPageState extends State<OnboardingPage>
               ),
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Enable background monitoring'),
+                child: const Text('Enable alerts'),
               ),
             ],
           ),
         );
-        if (enable == true) await widget.c.setMonitoring(true);
+        if (enable == true && mounted) {
+          await enableBackgroundAlertsWithPermission(context, widget.c);
+        }
+        if (enable != null) {
+          await widget.c.acknowledgeRelease('backgroundAlertsOffered');
+        }
       }
       await widget.c.completeOnboarding(dontShowAgain: _dontShow.value);
       if (mounted) widget.onFinished();
@@ -617,6 +628,10 @@ class _OnboardingPageState extends State<OnboardingPage>
       ],
       _ => [
         tagline('Make it yours.', color: mint),
+        const SizedBox(height: 12),
+        tagline(
+          'Enjoy exploring Fittery’s features! If you need help, check the FAQ or contact the developer.',
+        ),
         const SizedBox(height: 16),
         const _KeywordPills(
           items: [

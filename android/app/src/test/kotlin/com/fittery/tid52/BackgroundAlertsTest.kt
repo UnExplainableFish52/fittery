@@ -17,6 +17,39 @@ import java.util.concurrent.TimeUnit
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class)
 class BackgroundAlertsTest {
+    @Test fun snoozeSurvivesTemperatureChangesAndRearmsAfterFiveMinutes() {
+        val context: Context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("settings", 0).edit().clear().putString("values",
+            """{"heatAlert":true,"heatLimit":40,"heatReminderMinutes":5,"chargeAlert":false,"sound":false}""").commit()
+        ReflectionHelpers.setStaticField(BatteryEngine::class.java, "instance", null)
+        ReflectionHelpers.setStaticField(Alerts::class.java, "instance", null)
+        val engine = BatteryEngine.get(context)
+        engine.setBackgroundAlerts(true)
+        fun temperature(c: Int) = engine.receiveBatteryIntent(Intent(Intent.ACTION_BATTERY_CHANGED).apply {
+            putExtra(BatteryManager.EXTRA_LEVEL, 60); putExtra(BatteryManager.EXTRA_SCALE, 100)
+            putExtra(BatteryManager.EXTRA_PLUGGED, 0); putExtra(BatteryManager.EXTRA_TEMPERATURE, c * 10)
+        })
+        try {
+            temperature(41)
+            assertEquals(4, Alerts.get(context).activeMask)
+            engine.acknowledgeAlert(4)
+            assertTrue(engine.backgroundAlertsRunning)
+            assertTrue(engine.temperatureSnoozed())
+            temperature(35); temperature(41)
+            assertEquals(0, Alerts.get(context).activeMask)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(299, TimeUnit.SECONDS)
+            assertEquals(0, Alerts.get(context).activeMask)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(1, TimeUnit.SECONDS)
+            assertFalse(engine.temperatureSnoozed())
+            assertEquals(4, Alerts.get(context).activeMask)
+        } finally {
+            engine.setBackgroundAlerts(false)
+            Alerts.get(context).stop()
+            engine.worker.shutdown()
+            engine.worker.awaitTermination(10, TimeUnit.SECONDS)
+        }
+    }
+
     @Test fun existingInstallKeepsDashboardOffAndIntroductionAcknowledgmentSurvivesRecreation() {
         val context: Context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("release_preferences", 0).edit().clear().commit()

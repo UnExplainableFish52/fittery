@@ -6,6 +6,54 @@ import 'package:fittery/src/controller.dart';
 import 'package:fittery/src/models.dart';
 
 void main() {
+  testWidgets(
+    'Denied alert permission shows recovery rather than a storage error',
+    (tester) async {
+      final c = BatteryController()
+        ..ready = true
+        ..onboardingCompleted = true
+        ..showOnboardingOnLaunch = false
+        ..settingsIntroAcknowledged = true
+        ..reading = Reading({'plugged': 0});
+      var attempts = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(BatteryController.channel, (call) async {
+            if (call.method == 'backgroundAlerts') {
+              attempts++;
+              throw PlatformException(code: 'NOTIFICATIONS');
+            }
+            if (call.method == 'notificationPermission') {
+              return {'allowed': false, 'asked': true, 'canRequest': false};
+            }
+            return null;
+          });
+      await tester.pumpWidget(FitteryApp(controller: c));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Enable Background Alerts'));
+      await tester.pumpAndSettle();
+      expect(find.text('Open Settings'), findsOneWidget);
+      expect(
+        find.text('Your preference could not be saved. Try again in Settings.'),
+        findsNothing,
+      );
+      await tester.tap(find.text('Not now'));
+      await tester.pumpAndSettle();
+      expect(c.backgroundAlertsEnabled, isFalse);
+      expect(c.backgroundAlertsOffered, isTrue);
+      expect(attempts, 1);
+      await tester.tap(find.text('Dashboard').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Enable notifications'), findsNothing);
+      expect(attempts, 1);
+      await tester.pumpWidget(const SizedBox());
+      c.dispose();
+    },
+  );
+
   testWidgets('Settings introduction and alert offer are acknowledged once', (
     tester,
   ) async {

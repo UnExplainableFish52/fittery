@@ -43,7 +43,15 @@ class BatteryEngine internal constructor(private val context: Context) {
     internal var dreamListener: ((Map<String, Any?>) -> Unit)? = null
     var backgroundAlertsRunning = false
         private set
-    fun setBackgroundAlerts(value: Boolean) { if (backgroundAlertsRunning == value) return; backgroundAlertsRunning = value; reconcile() }
+    fun setBackgroundAlerts(value: Boolean) {
+        if (value) {
+            Alerts.existing()?.cancelMonitorReminder()
+            if (sessionPrompt?.get("kind") == "enableMonitor") sessionPrompt = null
+        }
+        if (backgroundAlertsRunning == value) return
+        backgroundAlertsRunning = value
+        reconcile()
+    }
     fun acknowledgeRelease(key: String) { release.acknowledge(key) }
     var monitoring = false
         private set
@@ -64,6 +72,23 @@ class BatteryEngine internal constructor(private val context: Context) {
     private var lastMonitorState = ""
     private var alertMask = prefs.getInt("alertMask", 0) and prefs.getInt("activeAlarmMask", 0).inv()
     private var latest = mapOf<String, Any?>()
+    private var heatEpisode = 0L
+    private val snoozeExpired = Runnable { if (foreground || monitoring || backgroundAlertsRunning) refresh() }
+    private fun alertState(): Map<String, Any?> = mapOf(
+        "activeAlertMask" to (Alerts.existing()?.activeMask ?: 0),
+        "heatEpisode" to heatEpisode, "heatSnoozed" to temperatureSnoozed())
+    internal fun temperatureSnoozed(): Boolean = prefs.getInt("heatSnoozeBoot", -1) == bootCount &&
+        prefs.getLong("heatSnoozeUntil", 0) > SystemClock.elapsedRealtime()
+
+    fun acknowledgeAlert(mask: Int) {
+        require(mask in 1..7)
+        if (mask and 4 != 0) snoozeTemperature()
+        // Preserve acknowledged threshold latches across process recreation.
+        alertMask = alertMask or (mask and (Alerts.existing()?.activeMask ?: prefs.getInt("activeAlarmMask", 0)))
+        prefs.edit().putInt("alertMask", alertMask).commit()
+        Alerts.get(context).acknowledge(mask)
+        refresh()
+    }
     private val chargeTimeEstimator = ChargeTimeEstimator()
     private val dischargeTimeEstimator = DischargeTimeEstimator()
     private val currentNormalizer = CurrentNormalizer(prefs.getFloat("currentDivisor", 1000f).toDouble(), prefs.getBoolean("currentInverted", false))
@@ -100,7 +125,7 @@ class BatteryEngine internal constructor(private val context: Context) {
 
     fun settings(): Map<String, Any?> {
         val json = JSONObject(prefs.getString("values", "{}") ?: "{}")
-        val saved = json.keys().asSequence().associateWith { key -> json.get(key).let { if (it == JSONObject.NULL) null else it } }
+        val saved = json.keys().asSequence().associateWith { key -> json.get(key).let { if (it == JSONObject.NULL) null else if (it is org.json.JSONArray) (0 until it.length()).map { index -> it.get(index) } else it } }
         return AlertTone.migrate(mapOf("chargeAlert" to true, "chargeLimit" to 80, "heatAlert" to true, "heatLimit" to 38,
             "heatReminderMinutes" to 5, "lowAlert" to false, "lowLimit" to 20, "chargingDashboard" to release.dashboardDefault, "chargingScreenSaver" to false) + saved)
     }
@@ -119,7 +144,7 @@ class BatteryEngine internal constructor(private val context: Context) {
     fun saveSettings(values: Map<String, Any?>, changedKey: String? = null) {
         values.forEach { (key, value) -> SettingValidation.check(key, value, allowTone = true) }
         val previous = settings()
-        if (previous["heatLimit"] != values["heatLimit"] || values["heatAlert"] != true) clearTemperatureSnooze()
+        if (values["heatAlert"] != true) clearTemperatureSnooze()
         alertMask = BatteryMath.rearmForSettings(alertMask, previous, values, changedKey)
         prefs.edit().putString("values", JSONObject(values).toString()).putInt("alertMask", alertMask).apply()
         if (previous["keepRecordings"] != values["keepRecordings"]) worker.execute { monitorStore.cleanup(values["keepRecordings"] == true, force = true) }
@@ -211,7 +236,7 @@ class BatteryEngine internal constructor(private val context: Context) {
             "temperatureC" to b?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)?.takeIf { it != Int.MIN_VALUE }?.div(10.0),
             "settings" to settings(), "monitoring" to monitoring, "monitoringEnabled" to MonitorPreference.enabled(context),
             "backgroundAlertsEnabled" to MonitorPreference.alertsEnabled(context), "backgroundAlertsRunning" to backgroundAlertsRunning,
-            "releasePreferences" to release.state(), "alarmActive" to (Alerts.existing()?.alarmActive == true))
+            "releasePreferences" to release.state(), "alarmActive" to (Alerts.existing()?.alarmActive == true)) + alertState()
     }
 
     private fun read(): Map<String, Any?> {
@@ -335,6 +360,7 @@ class BatteryEngine internal constructor(private val context: Context) {
             "optimized" to (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName),
             "notificationsAllowed" to (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).areNotificationsEnabled()
         )
+        result.putAll(alertState())
         result.putAll(hardware)
         result["fullCapacityMah"] = fullCapacity
         result["fullCapacitySource"] = if (fullCapacity != null) "Hardware reported" else "Unavailable"
@@ -395,6 +421,8 @@ class BatteryEngine internal constructor(private val context: Context) {
                 registered = true
             }
             handler.removeCallbacks(tick)
+            handler.removeCallbacks(snoozeExpired)
+            if (temperatureSnoozed()) handler.postDelayed(snoozeExpired, prefs.getLong("heatSnoozeUntil", 0) - SystemClock.elapsedRealtime())
             if (foreground || dreaming || monitoring) requestHardware()
             sample(foreground || monitoring)
             if (foreground || dreaming || monitoring) handler.postDelayed(tick, sampleIntervalMs)
@@ -429,7 +457,7 @@ class BatteryEngine internal constructor(private val context: Context) {
     private fun sample(record: Boolean) {
         val reading = read().toMutableMap()
         val plugged = (reading["plugged"] as? Number)?.toInt()?.let { it > 0 } == true
-        if (plugged && observedPlugged != true && foreground && !monitoring) {
+        if (plugged && observedPlugged != true && foreground && !monitoring && !backgroundAlertsRunning) {
             Alerts.get(context).monitorReminder(settings())
             offerSessionPrompt("enableMonitor", publish = false)
         }
@@ -442,6 +470,7 @@ class BatteryEngine internal constructor(private val context: Context) {
         evaluateAlerts(reading)
         reading["chargeAlertLatched"] = alertMask and 1 != 0
         reading["alarmActive"] = Alerts.existing()?.alarmActive == true
+        reading.putAll(alertState())
         latest = reading
         // Scheduling must survive wall-clock corrections. Recorded timestamps
         // still use civil time, while cadence follows Android's elapsed clock.
@@ -475,7 +504,7 @@ class BatteryEngine internal constructor(private val context: Context) {
         // One-second chart events do not rebuild the dashboard or update the
         // foreground notification every second. Explicit refresh/settings and
         // battery state changes still publish immediately.
-        val uiState = "$state/${reading["alarmActive"]}"
+        val uiState = "$state/${reading["activeAlertMask"]}/${reading["heatEpisode"]}/${reading["heatSnoozed"]}"
         if (currentListener == null || !record || now - lastUiPublish >= 3000 || uiState != lastUiState) {
             lastUiPublish = now; lastUiState = uiState
             publishUi(reading)
@@ -522,18 +551,21 @@ class BatteryEngine internal constructor(private val context: Context) {
     private val bootCount: Int get() = android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, 0)
     private fun clearTemperatureSnooze() { prefs.edit().remove("heatSnoozeUntil").remove("heatSnoozeBoot").apply() }
     fun snoozeTemperature() {
-        if (Alerts.existing()?.temperatureActive != true) return
+        if ((Alerts.existing()?.activeMask ?: prefs.getInt("activeAlarmMask", 0)) and 4 == 0) return
         val minutes = (settings()["heatReminderMinutes"] as? Number)?.toInt() ?: 5
-        prefs.edit().putLong("heatSnoozeUntil", SystemClock.elapsedRealtime() + minutes * 60000L).putInt("heatSnoozeBoot", bootCount).apply()
+        prefs.edit().putLong("heatSnoozeUntil", SystemClock.elapsedRealtime() + minutes * 60000L).putInt("heatSnoozeBoot", bootCount).commit()
+        handler.removeCallbacks(snoozeExpired)
+        handler.postDelayed(snoozeExpired, minutes * 60000L)
     }
 
     private fun evaluateAlerts(r: Map<String, Any?>) {
+        if (!NotificationPermission.allowed(context)) { Alerts.existing()?.silence(); return }
         val s = settings()
         val temperature = (r["temperatureC"] as? Number)?.toDouble()
         val limit = (s["heatLimit"] as Number).toInt()
         val until = prefs.getLong("heatSnoozeUntil", 0)
         val newBoot = prefs.getInt("heatEpisodeBoot", -1) != bootCount
-        if (newBoot || temperature != null && (temperature < limit - 2 || until > 0 && SystemClock.elapsedRealtime() >= until)) {
+        if (newBoot || !temperatureSnoozed() && (temperature != null && temperature < limit - 2 || until > 0 && SystemClock.elapsedRealtime() >= until)) {
             alertMask = alertMask and 4.inv()
             clearTemperatureSnooze()
             prefs.edit().putInt("alertMask", alertMask).putInt("heatEpisodeBoot", bootCount).apply()
@@ -543,11 +575,12 @@ class BatteryEngine internal constructor(private val context: Context) {
             alertMask, (r["plugged"] as Int) > 0, r["status"] == "Charging" || (r["status"] == "Full" && (r["plugged"] as Int) > 0), r["level"] as Int?, r["temperatureC"] as Double?,
             s["chargeAlert"] == true, (s["chargeLimit"] as? Number)?.toInt() ?: 80,
             s["lowAlert"] == true, (s["lowLimit"] as? Number)?.toInt() ?: 20,
-            s["heatAlert"] == true, (s["heatLimit"] as? Number)?.toInt() ?: 38
+            s["heatAlert"] == true && !temperatureSnoozed(), (s["heatLimit"] as? Number)?.toInt() ?: 38
         )
         if (newMask != alertMask) { alertMask = newMask; prefs.edit().putInt("alertMask",alertMask).apply() }
         if (fired and 1 != 0) Alerts.get(context).notify(11, "Charging target reached", "Battery is at ${r["level"]}%. You can unplug your charger.", s)
         if (fired and 2 != 0) Alerts.get(context).notify(12, "Battery is running low", "Battery is at ${r["level"]}%. Connect a charger soon.", s)
+        if (fired and 4 != 0) heatEpisode++
         if (fired and 4 != 0) Alerts.get(context).notify(13, "Battery temperature is high", "Battery temperature is ${r["temperatureC"]}°C. Let your phone cool down.", s)
     }
 

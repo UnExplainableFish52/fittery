@@ -36,6 +36,7 @@ class Alerts private constructor(private val context: Context) {
     val temperatureActive: Boolean get() = activeAlarmMask and 4 != 0
     private fun silenceLabel(settings: Map<*, *>, heat: Boolean = temperatureActive) = if (heat) "Snooze for ${settings["heatReminderMinutes"] ?: 5} minutes" else "Silence"
     val alarmActive: Boolean get() = activeAlarmMask != 0
+    val activeMask: Int get() = activeAlarmMask
     private var alarmReceiverRegistered = false
     private val legacyAlarmLoop = object : Runnable {
         override fun run() {
@@ -155,10 +156,8 @@ class Alerts private constructor(private val context: Context) {
             val min = it / 60000
             "${min / 60}h ${min % 60}m ${if (r["status"] == "Charging") "until full" else "remaining"}"
         } ?: "Time estimate unavailable"
-        val detail = when (s["notificationFormat"]) {
-            "Current" -> current; "Power" -> power; "Temperature" -> temperature; "Time remaining" -> remaining
-            else -> "$current · $power · $temperature · $remaining"
-        }
+        val values = mapOf("Current" to current, "Power" to power, "Temperature" to temperature, "Time remaining" to remaining)
+        val detail = NotificationElements.selected(s).joinToString(" · ") { values.getValue(it) }
         val stop = PendingIntent.getService(context,1,Intent(context,MonitorService::class.java).setAction("STOP"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = builder(MONITOR_CHANNEL)
             .setContentTitle("${r["level"] ?: "—"}% · ${r["status"] ?: "Monitoring"}")
@@ -172,20 +171,21 @@ class Alerts private constructor(private val context: Context) {
         return notification.addAction(Notification.Action.Builder(null, "Stop monitoring", stop).build()).build()
     }
 
-    private fun silenceIntent(): PendingIntent = PendingIntent.getBroadcast(
-        context, 0, Intent(context, AlarmDismissReceiver::class.java),
+    private fun silenceIntent(mask: Int = 7): PendingIntent = PendingIntent.getBroadcast(
+        context, mask, Intent(context, AlarmDismissReceiver::class.java).setAction("com.fittery.tid52.SILENCE_$mask").putExtra("alertMask", mask),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
     fun notify(id: Int, title: String, message: String, settings: Map<String, Any?>) {
+        if (!NotificationPermission.allowed(context)) return
         stopPreview()
-        val dismiss = silenceIntent()
+        val dismiss = silenceIntent(when (id) { 11 -> 1; 12 -> 2; else -> 4 })
         val n = builder(ALERT_CHANNEL).setContentTitle(title).setContentText(message)
             .setStyle(Notification.BigTextStyle().bigText(message))
             .setPriority(Notification.PRIORITY_HIGH).setCategory(Notification.CATEGORY_ALARM)
             .setVisibility(if (settings["lockScreen"] != false) Notification.VISIBILITY_PUBLIC else Notification.VISIBILITY_SECRET)
             .setAutoCancel(false).setOngoing(true).setOnlyAlertOnce(true).setDeleteIntent(dismiss)
-            .addAction(Notification.Action.Builder(null,silenceLabel(settings, id == 13 || temperatureActive),dismiss).build()).build()
+            .addAction(Notification.Action.Builder(null,silenceLabel(settings, id == 13),dismiss).build()).build()
         manager.notify(id,n)
         activeAlarmMask = activeAlarmMask or when (id) { 11 -> 1; 12 -> 2; 13 -> 4; else -> 0 }
         persistActiveAlarms()
@@ -215,12 +215,14 @@ class Alerts private constructor(private val context: Context) {
 
     private fun persistActiveAlarms() { context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putInt("activeAlarmMask", activeAlarmMask).apply() }
 
-    fun silence() {
-        for (id in listOf(11, 12, 13)) manager.cancel(id)
-        activeAlarmMask = 0
+    fun silence() = acknowledge(7)
+
+    fun acknowledge(mask: Int) {
+        for ((bit, id) in listOf(1 to 11, 2 to 12, 4 to 13)) if (mask and bit != 0) manager.cancel(id)
+        activeAlarmMask = activeAlarmMask and mask.inv()
         persistActiveAlarms()
-        stopAlarmSound()
-        releaseAlarmReceiver()
+        syncAlarmSound(BatteryEngine.get(context).settings())
+        if (activeAlarmMask == 0) releaseAlarmReceiver()
     }
 
     private fun releaseAlarmReceiver() {
