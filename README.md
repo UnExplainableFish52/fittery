@@ -1,10 +1,45 @@
-# Fittery
+<div align="center">
 
-**Current version: v1.2.1 (Build 28)** · **Know Your Battery**
+<a href="https://play.google.com/store/apps/details?id=com.fittery.tid52">
+  <img src="store-assets/app-icon-512.png" alt="Fittery app logo" width="112" height="112">
+</a>
 
-Read the [v1.2.1 release notes](docs/releases/v1.2.1.md) for the latest changes, installation guidance, and APK checksum. The Flutter package version is `1.2.1+28`; the intended release tag is `v1.2.1`. The [first GitHub release notes](docs/releases/v1.2.0.md) provide the complete feature overview.
+<h1>Fittery</h1>
 
-A private Android battery monitor built with Flutter and a direct Kotlin bridge. The app has three tabs: Dashboard, History, and Settings. No ads, accounts, analytics, or remote services. Charts use the fl_chart package.
+<p><strong>Know your battery.</strong></p>
+<p>Live readings, local history, and charging alerts you control.</p>
+
+<a href="https://play.google.com/store/apps/details?id=com.fittery.tid52">
+  <img src="docs/assets/google-play-badge.png" alt="Get Fittery on Google Play" width="200">
+</a>
+
+<p>Android 7.0+ &nbsp;·&nbsp; No ads &nbsp;·&nbsp; No accounts &nbsp;·&nbsp; Open source</p>
+
+</div>
+
+![Fittery: know your battery. Live readings, local history and charging alerts beside an illustrated battery on teal.](store-assets/feature-graphic-1024x500.png)
+
+Fittery helps you see what your phone's battery is doing while you use it and charge it. Check live readings, save a monitoring session, or set an alert for when it's time to unplug. Your recordings stay on your phone, with no analytics or remote services.
+
+## A closer look at your battery
+
+- **Live readings.** See battery level, temperature, voltage, current, and net battery power in one place.
+- **History you can explore.** Record monitoring sessions, compare metrics on a shared timeline, and revisit charging summaries.
+- **Alerts that fit your routine.** Set charging, low-battery, and temperature thresholds, with a tone of your choice.
+- **A view for your charging desk.** Open the fullscreen charging dashboard, or choose Fittery as Android's charging screen saver.
+- **Your settings, your call.** Adjust the theme, units, and notification readings. Enable background alerts and recording separately.
+
+Available readings depend on what your phone exposes. See [hardware limitations](#hardware-limitations) for details.
+
+## Get Fittery
+
+**[Download on Google Play](https://play.google.com/store/apps/details?id=com.fittery.tid52)** for Android 7.0 and newer.
+
+Prefer an APK? Check [GitHub Releases](https://github.com/UnExplainableFish52/fittery/releases) for downloads. The [v1.2.1 release notes](docs/releases/v1.2.1.md) include installation guidance and the APK checksum.
+
+**Current source version: v1.2.1 (Build 28).** Built with Flutter and a direct Kotlin bridge; charts use `fl_chart`. The [v1.2.0 release notes](docs/releases/v1.2.0.md) cover the original feature set.
+
+---
 
 ## Run
 
