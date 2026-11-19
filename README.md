@@ -17,7 +17,7 @@
 
 </div>
 
-![Fittery: know your battery. Live readings, local history and charging alerts beside an illustrated battery on teal.](store-assets/feature-graphic-1024x500.png)
+[![Fittery — Know Your Battery. Custom alerts, live monitoring, battery graphs, local and open source, with a glowing blue and green battery.](docs/assets/fittery-banner-1024x500.png)](https://play.google.com/store/apps/details?id=com.fittery.tid52)
 
 Fittery helps you see what your phone's battery is doing while you use it and charge it. Check live readings, save a monitoring session, or set an alert for when it's time to unplug. Your recordings stay on your phone, with no analytics or remote services.
 
